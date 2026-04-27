@@ -1,0 +1,363 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Check, FileText, Video, Clock, Star, CheckCircle2, Sparkles } from 'lucide-react';
+import { useAuthStore } from '../store/useAuthStore';
+
+interface Package {
+  code: 'basic' | 'pro';
+  name: string;
+  subtitle: string;
+  price: number;
+  features: string[];
+  highlight?: string;
+  deliveryDays: string;
+  hasVideoEdit: boolean;
+  badge?: string;
+}
+
+const packages: Package[] = [
+  {
+    code: 'basic',
+    name: '专业文字版',
+    subtitle: '深度文字分析，全面了解孩子表现',
+    price: 299,
+    features: [
+      '5000字专业分析报告',
+      '20项维度逐项评分',
+      '球员基本信息与身体发育评估',
+      '比赛概况与战术体系分析',
+      '技术特点深度解析',
+      '比赛关键事件详细拆解',
+      '同龄对比与发展潜力评估',
+      '短中长期发展目标规划',
+      '个性化训练建议方案',
+      'PDF格式专业报告',
+    ],
+    deliveryDays: '3-5个工作日',
+    hasVideoEdit: false,
+    badge: '基础版',
+  },
+  {
+    code: 'pro',
+    name: '视频解析版',
+    subtitle: '视频+文字双维度，最全面分析体验',
+    price: 799,
+    highlight: '最受欢迎',
+    features: [
+      '包含文字版全部内容',
+      '5-10分钟专业分析视频',
+      '画面标注与战术标线',
+      '高光时刻精选剪辑',
+      '关键镜头逐帧解析',
+      '专家画外音专业讲解',
+      '可视化数据图表展示',
+      '永久在线观看权限',
+      '支持下载保存',
+    ],
+    deliveryDays: '5-7个工作日',
+    hasVideoEdit: true,
+    badge: '推荐',
+  },
+];
+
+// Animated counter hook
+function useCountUp(target: number, duration: number = 1000) {
+  const [count, setCount] = useState(0);
+  const [started, setStarted] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && !started) {
+          setStarted(true);
+        }
+      },
+      { threshold: 0.5 }
+    );
+    if (ref.current) observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, [started]);
+
+  useEffect(() => {
+    if (!started) return;
+    let startTime: number;
+    const step = (timestamp: number) => {
+      if (!startTime) startTime = timestamp;
+      const progress = Math.min((timestamp - startTime) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+      setCount(Math.floor(eased * target));
+      if (progress < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }, [started, target, duration]);
+
+  return { count, ref };
+}
+
+// Staggered children animation component
+function StaggerItem({ children, delay = 0, className = '' }: { children: React.ReactNode; delay?: number; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) setVisible(true); },
+      { threshold: 0.1 }
+    );
+    if (ref.current) observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={{
+        opacity: visible ? 1 : 0,
+        transform: visible ? 'translateY(0)' : 'translateY(16px)',
+        transition: `opacity 0.5s ease-out ${delay}ms, transform 0.5s ease-out ${delay}ms`,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+const PackageSelect: React.FC = () => {
+  const navigate = useNavigate();
+  const { isAuthenticated } = useAuthStore();
+  const [selected, setSelected] = useState<'basic' | 'pro' | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    // Entrance animation
+    const timer = setTimeout(() => setMounted(true), 100);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleSelect = (code: 'basic' | 'pro') => {
+    setSelected(code);
+  };
+
+  const handleConfirm = () => {
+    if (!selected) return;
+    if (!isAuthenticated) {
+      sessionStorage.setItem('redirectAfterLogin', `/order-confirm?package=${selected}`);
+      navigate('/login');
+      return;
+    }
+    navigate(`/order-confirm?package=${selected}`);
+  };
+
+  return (
+    <div className="min-h-screen bg-[#0a0e17] pt-[80px] pb-32 px-4">
+      <div className="max-w-5xl mx-auto">
+        {/* Header */}
+        <div
+          className={`text-center mb-10 transition-all duration-700 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}
+        >
+          <div className="flex items-center justify-center gap-2 mb-3">
+            <Sparkles className="w-5 h-5 text-[#39ff14] animate-pulse" />
+            <span className="text-[#39ff14] text-sm font-medium tracking-wider uppercase">Choose Your Plan</span>
+          </div>
+          <h1 className="text-3xl md:text-4xl font-bold text-white mb-4">
+            选择分析方案
+          </h1>
+          <p className="text-white/60 text-lg max-w-2xl mx-auto">
+            两档价格，满足不同需求，让专业分析触手可及
+          </p>
+        </div>
+
+        {/* Package Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {packages.map((pkg, pkgIdx) => {
+            const isSelected = selected === pkg.code;
+            return (
+              <div
+                key={pkg.code}
+                onClick={() => handleSelect(pkg.code)}
+                className={`relative rounded-2xl border cursor-pointer overflow-hidden transition-all duration-400 group
+                  ${isSelected
+                    ? 'border-[#39ff14] bg-white/[0.06] shadow-[0_0_40px_rgba(57,255,20,0.2)] scale-[1.02]'
+                    : 'border-white/10 bg-white/[0.02] hover:border-white/30 hover:bg-white/[0.05] hover:scale-[1.01]'
+                  }`}
+                style={{
+                  opacity: mounted ? 1 : 0,
+                  transform: mounted ? 'scale(1)' : 'scale(0.95)',
+                  transition: `opacity 0.6s ease-out ${pkgIdx * 150}ms, transform 0.6s ease-out ${pkgIdx * 150}ms, border-color 0.2s, box-shadow 0.3s, background 0.2s`,
+                }}
+              >
+                {/* Animated gradient on selection */}
+                {isSelected && (
+                  <div className="absolute inset-0 bg-gradient-to-br from-[#39ff14]/5 to-transparent pointer-events-none" />
+                )}
+
+                {/* Popular badge */}
+                {pkg.highlight && (
+                  <div className="absolute top-0 right-0 z-10">
+                    <div className="relative">
+                      {/* Glow effect */}
+                      <div className="absolute -inset-1 bg-gradient-to-r from-amber-500 to-orange-500 rounded-bl-2xl rounded-tr-2xl blur-sm opacity-60" />
+                      <div className="relative bg-gradient-to-l from-amber-500 to-orange-500 text-white text-xs font-bold px-5 py-2 rounded-bl-2xl rounded-tr-2xl flex items-center gap-1.5">
+                        <Star className="w-3 h-3 fill-current" />
+                        {pkg.highlight}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="p-6 md:p-8">
+                  {/* Title */}
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                          pkg.code === 'pro'
+                            ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                            : 'bg-[#39ff14]/10 text-[#39ff14] border border-[#39ff14]/20'
+                        }`}>
+                          {pkg.badge}
+                        </span>
+                      </div>
+                      <h3 className="text-xl font-bold text-white mb-1 group-hover:text-[#39ff14] transition-colors duration-300">
+                        {pkg.name}
+                      </h3>
+                      <p className="text-white/50 text-sm">{pkg.subtitle}</p>
+                    </div>
+                    {/* Animated selection indicator */}
+                    <div
+                      className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-all duration-300 ${
+                        isSelected
+                          ? 'border-[#39ff14] bg-[#39ff14] scale-110 shadow-[0_0_12px_rgba(57,255,20,0.5)]'
+                          : 'border-white/30 group-hover:border-white/50'
+                      }`}
+                    >
+                      <Check className={`w-4 h-4 transition-all duration-300 ${isSelected ? 'text-black scale-100' : 'text-transparent scale-50'}`} />
+                    </div>
+                  </div>
+
+                  {/* Price — animated counter */}
+                  <div className="flex items-baseline gap-1 mb-6">
+                    <span className={`text-3xl font-bold text-white transition-colors duration-300 ${isSelected ? 'text-[#39ff14]' : ''}`}>
+                      ¥{pkg.price}
+                    </span>
+                    <span className="text-white/40 text-sm">/场</span>
+                  </div>
+
+                  {/* Delivery */}
+                  <div className="flex items-center gap-2 text-sm text-white/60 mb-6">
+                    <Clock className="w-4 h-4 animate-pulse" style={{ animationDuration: '3s' }} />
+                    <span>{pkg.deliveryDays}交付</span>
+                    {pkg.hasVideoEdit && (
+                      <>
+                        <span className="mx-1">·</span>
+                        <Video className="w-4 h-4 text-amber-400" />
+                        <span className="text-amber-400">含分析视频</span>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Divider with glow on select */}
+                  <div
+                    className={`h-px mb-6 transition-all duration-500 ${
+                      isSelected ? 'bg-gradient-to-r from-transparent via-[#39ff14]/60 to-transparent' : 'bg-white/10'
+                    }`}
+                  />
+
+                  {/* Features — staggered reveal */}
+                  <ul className="space-y-3">
+                    {pkg.features.map((feature, idx) => (
+                      <li
+                        key={idx}
+                        className="flex items-start gap-3 text-sm text-white/80"
+                        style={{
+                          opacity: isSelected ? 1 : 0.7,
+                          transform: isSelected ? 'translateX(0)' : 'translateX(0)',
+                          transition: `opacity 0.3s ease-out ${idx * 50}ms, color 0.2s`,
+                        }}
+                      >
+                        <CheckCircle2
+                          className={`w-4 h-4 mt-0.5 flex-shrink-0 transition-all duration-300 ${
+                            pkg.code === 'pro' ? 'text-amber-400' : 'text-[#39ff14]'
+                          } ${isSelected ? 'scale-110' : ''}`}
+                          style={{ transitionDelay: isSelected ? `${idx * 50 + 200}ms` : '0ms' }}
+                        />
+                        <span className="group-hover:text-white transition-colors duration-200">{feature}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                {/* Bottom glow line on selection */}
+                <div
+                  className={`absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-[#39ff14]/80 to-transparent transition-opacity duration-500 ${
+                    isSelected ? 'opacity-100' : 'opacity-0'
+                  }`}
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Trust badges */}
+        <StaggerItem delay={400} className="mt-10 flex flex-wrap items-center justify-center gap-6 text-sm text-white/40">
+          <div className="flex items-center gap-2 group cursor-default">
+            <div className="w-8 h-8 rounded-full bg-yellow-500/10 flex items-center justify-center group-hover:bg-yellow-500/20 transition-colors duration-300">
+              <Star className="w-4 h-4 text-yellow-400" />
+            </div>
+            <span className="group-hover:text-yellow-300 transition-colors duration-300">平台认证分析师</span>
+          </div>
+          <div className="flex items-center gap-2 group cursor-default">
+            <div className="w-8 h-8 rounded-full bg-[#39ff14]/10 flex items-center justify-center group-hover:bg-[#39ff14]/20 transition-colors duration-300">
+              <FileText className="w-4 h-4 text-[#39ff14]" />
+            </div>
+            <span className="group-hover:text-[#39ff14]/80 transition-colors duration-300">不满意可申请修改</span>
+          </div>
+          <div className="flex items-center gap-2 group cursor-default">
+            <div className="w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors duration-300">
+              <CheckCircle2 className="w-4 h-4 text-blue-400" />
+            </div>
+            <span className="group-hover:text-blue-300 transition-colors duration-300">数据仅本人可见</span>
+          </div>
+        </StaggerItem>
+      </div>
+
+      {/* Bottom Action Bar — slide up on selection */}
+      <div
+        className={`fixed bottom-0 left-0 right-0 z-50 transition-all duration-500 ease-out ${
+          selected ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'
+        }`}
+      >
+        <div className="bg-[#0f1419]/95 backdrop-blur-xl border-t border-white/10">
+          <div className="max-w-5xl mx-auto px-4 py-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <p className="text-white/50 text-sm mb-1">已选择方案</p>
+                <p className="text-white font-semibold flex items-center gap-2">
+                  {packages.find((p) => p.code === selected)?.name}
+                  <span className="text-[#39ff14] ml-1 text-xl font-bold">
+                    ¥{packages.find((p) => p.code === selected)?.price}
+                  </span>
+                </p>
+              </div>
+              <button
+                onClick={handleConfirm}
+                className="group relative px-8 py-3 bg-[#39ff14] text-black rounded-xl font-bold overflow-hidden"
+              >
+                {/* Shimmer effect */}
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
+                <span className="relative flex items-center gap-2">
+                  确认方案，去支付
+                  <Check className="w-4 h-4 group-hover:translate-x-1 transition-transform duration-200" />
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default PackageSelect;

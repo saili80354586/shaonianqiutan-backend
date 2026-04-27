@@ -1,0 +1,46 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+*.sw?
+
+# Logs
+*.log
+logs/
+
+# Local databases and backups
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.backup
+*.backup.*
+*.bak
+*.bk
+*_backup
+*_backup.*
+*_bak
+
+# Build outputs and local binaries
+/backend
+/backend-*
+/backend_*
+/main
+/main_*
+/main-*
+/seed_demo_v2
+*.out
+
+# Runtime data
+/uploads/
+/cache/
+
+# Coverage and temporary files
+coverage/
+.coverage
+tmp/
