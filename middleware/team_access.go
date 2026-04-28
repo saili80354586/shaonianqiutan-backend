@@ -11,11 +11,11 @@ import (
 
 // TeamAccessContext 球队访问上下文
 type TeamAccessContext struct {
-	IsClubAdmin  bool   // 是否是俱乐部管理员
-	IsTeamCoach  bool   // 是否是球队教练
-	CoachRole    string // 教练角色（如果是教练）
-	ClubID       uint   // 俱乐部ID
-	TeamID       uint   // 球队ID
+	IsClubAdmin bool   // 是否是俱乐部管理员
+	IsTeamCoach bool   // 是否是球队教练
+	CoachRole   string // 教练角色（如果是教练）
+	ClubID      uint   // 俱乐部ID
+	TeamID      uint   // 球队ID
 }
 
 // TeamAccessMiddleware 球队访问权限中间件
@@ -52,13 +52,19 @@ func TeamAccessMiddleware() gin.HandlerFunc {
 			TeamID: uint(teamID),
 		}
 
+		var team models.Team
+		if err := db.Where("id = ?", teamID).First(&team).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "球队不存在"})
+			c.Abort()
+			return
+		}
+
 		// 1. 检查用户是否为俱乐部管理员
 		var club models.Club
 		if err := db.Where("user_id = ?", userID).First(&club).Error; err == nil {
 			// 用户是某个俱乐部的管理员，检查该球队是否属于此俱乐部
 			// teams.club_id 存的是 clubs.id
-			var team models.Team
-			if err := db.Where("id = ? AND club_id = ?", teamID, club.ID).First(&team).Error; err == nil {
+			if team.ClubID == club.ID {
 				accessCtx.IsClubAdmin = true
 				accessCtx.ClubID = club.ID
 			}
@@ -69,11 +75,7 @@ func TeamAccessMiddleware() gin.HandlerFunc {
 		if err := db.Where("team_id = ? AND user_id = ? AND status = ?", teamID, userID, "active").First(&teamCoach).Error; err == nil {
 			accessCtx.IsTeamCoach = true
 			accessCtx.CoachRole = string(teamCoach.Role)
-			// 获取球队所属的俱乐部ID
-			var team models.Team
-			if err := db.Where("id = ?", teamID).First(&team).Error; err == nil {
-				accessCtx.ClubID = team.ClubID
-			}
+			accessCtx.ClubID = team.ClubID
 		}
 
 		// 3. 检查权限：必须是俱乐部管理员或球队教练

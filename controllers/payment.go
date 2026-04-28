@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shaonianqiutan/backend/config"
 	"github.com/shaonianqiutan/backend/middleware"
 	"github.com/shaonianqiutan/backend/models"
 	"github.com/shaonianqiutan/backend/utils"
@@ -22,6 +23,10 @@ func NewPaymentController(orderRepo *models.OrderRepository) *PaymentController 
 	return &PaymentController{orderRepo: orderRepo}
 }
 
+func paymentNotConfigured(c *gin.Context) {
+	utils.Error(c, http.StatusServiceUnavailable, "生产支付服务尚未接入")
+}
+
 // CreatePaymentRequest 创建支付请求
 type CreatePaymentRequest struct {
 	OrderID uint    `json:"order_id" binding:"required"`
@@ -31,6 +36,11 @@ type CreatePaymentRequest struct {
 
 // CreatePayment 创建支付
 func (ctrl *PaymentController) CreatePayment(c *gin.Context) {
+	if !config.IsDevMode() {
+		paymentNotConfigured(c)
+		return
+	}
+
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
 		utils.Error(c, http.StatusUnauthorized, "未认证")
@@ -83,6 +93,11 @@ type SimulatePayRequest struct {
 
 // SimulatePay 模拟支付（过渡方案）
 func (ctrl *PaymentController) SimulatePay(c *gin.Context) {
+	if !config.IsDevMode() {
+		utils.Error(c, http.StatusForbidden, "模拟支付仅允许在开发环境使用")
+		return
+	}
+
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
 		utils.Error(c, http.StatusUnauthorized, "未认证")
@@ -131,16 +146,21 @@ func (ctrl *PaymentController) SimulatePay(c *gin.Context) {
 	}
 
 	utils.Success(c, "支付成功", gin.H{
-		"order_id":     order.ID,
-		"status":       "paid",
-		"paid_at":      time.Now().Format("2006-01-02 15:04:05"),
-		"amount":       order.Amount,
+		"order_id":       order.ID,
+		"status":         "paid",
+		"paid_at":        time.Now().Format("2006-01-02 15:04:05"),
+		"amount":         order.Amount,
 		"payment_method": req.PaymentMethod,
 	})
 }
 
 // GetPaymentStatus 获取支付状态
 func (ctrl *PaymentController) GetPaymentStatus(c *gin.Context) {
+	if !config.IsDevMode() {
+		paymentNotConfigured(c)
+		return
+	}
+
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
 		utils.Error(c, http.StatusUnauthorized, "未认证")
@@ -202,12 +222,22 @@ func (ctrl *PaymentController) GetOrderPaymentStatus(c *gin.Context) {
 
 // PaymentCallback 支付回调
 func (ctrl *PaymentController) PaymentCallback(c *gin.Context) {
+	if !config.IsDevMode() {
+		paymentNotConfigured(c)
+		return
+	}
+
 	// TODO: 处理支付平台回调
 	utils.Success(c, "回调处理成功", nil)
 }
 
 // Refund 申请退款
 func (ctrl *PaymentController) Refund(c *gin.Context) {
+	if !config.IsDevMode() {
+		paymentNotConfigured(c)
+		return
+	}
+
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
 		utils.Error(c, http.StatusUnauthorized, "未认证")

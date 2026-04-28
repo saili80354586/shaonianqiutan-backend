@@ -45,7 +45,21 @@ func GetPort() string {
 // IsDevMode 是否是开发模式
 func IsDevMode() bool {
 	mode := os.Getenv("NODE_ENV")
-	return mode == "development" || mode == ""
+	return mode == "development"
+}
+
+// ValidateRuntimeConfig 校验运行环境，防止漏配时误按开发模式启动
+func ValidateRuntimeConfig() {
+	if IsDevMode() {
+		return
+	}
+
+	required := []string{"JWT_SECRET", "FRONTEND_URL", "BASE_URL"}
+	for _, key := range required {
+		if os.Getenv(key) == "" {
+			log.Fatalf("FATAL: %s environment variable must be set outside development", key)
+		}
+	}
 }
 
 // GetBaseUrl 获取基础URL

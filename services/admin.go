@@ -8,22 +8,25 @@ import (
 	"github.com/shaonianqiutan/backend/models"
 	"github.com/shaonianqiutan/backend/utils"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 // AdminService 管理后台服务
 type AdminService struct {
-	userRepo             *models.UserRepository
-	reportRepo           *models.ReportRepository
-	orderRepo            *models.OrderRepository
-	analystRepo           *models.AnalystRepository
-	applicationRepo       *models.AnalystApplicationRepository
-	contentReportRepo     *models.ContentReportRepository
-	sensitiveWordRepo     *models.SensitiveWordRepository
-	platformAnnRepo       *models.PlatformAnnouncementRepository
-	bannerRepo            *models.BannerRepository
-	faqRepo              *models.FAQRepository
-	loginLogRepo         *models.LoginLogRepository
-	videoAnalysisRepo     *models.VideoAnalysisRepository
+	userRepo          *models.UserRepository
+	reportRepo        *models.ReportRepository
+	orderRepo         *models.OrderRepository
+	analystRepo       *models.AnalystRepository
+	applicationRepo   *models.AnalystApplicationRepository
+	contentReportRepo *models.ContentReportRepository
+	sensitiveWordRepo *models.SensitiveWordRepository
+	platformAnnRepo   *models.PlatformAnnouncementRepository
+	bannerRepo        *models.BannerRepository
+	faqRepo           *models.FAQRepository
+	loginLogRepo      *models.LoginLogRepository
+	videoAnalysisRepo *models.VideoAnalysisRepository
+	assignmentRepo    *models.OrderAssignmentRepository
+	statusHistoryRepo *models.OrderStatusHistoryRepository
 }
 
 // NewAdminService 创建管理后台服务
@@ -40,20 +43,24 @@ func NewAdminService(
 	faqRepo *models.FAQRepository,
 	loginLogRepo *models.LoginLogRepository,
 	videoAnalysisRepo *models.VideoAnalysisRepository,
+	assignmentRepo *models.OrderAssignmentRepository,
+	statusHistoryRepo *models.OrderStatusHistoryRepository,
 ) *AdminService {
 	return &AdminService{
-		userRepo:            userRepo,
-		reportRepo:          reportRepo,
-		orderRepo:           orderRepo,
-		analystRepo:         analystRepo,
-		applicationRepo:     applicationRepo,
-		contentReportRepo:   contentReportRepo,
-		sensitiveWordRepo:   sensitiveWordRepo,
-		platformAnnRepo:     platformAnnRepo,
-		bannerRepo:          bannerRepo,
-		faqRepo:            faqRepo,
-		loginLogRepo:       loginLogRepo,
-		videoAnalysisRepo:   videoAnalysisRepo,
+		userRepo:          userRepo,
+		reportRepo:        reportRepo,
+		orderRepo:         orderRepo,
+		analystRepo:       analystRepo,
+		applicationRepo:   applicationRepo,
+		contentReportRepo: contentReportRepo,
+		sensitiveWordRepo: sensitiveWordRepo,
+		platformAnnRepo:   platformAnnRepo,
+		bannerRepo:        bannerRepo,
+		faqRepo:           faqRepo,
+		loginLogRepo:      loginLogRepo,
+		videoAnalysisRepo: videoAnalysisRepo,
+		assignmentRepo:    assignmentRepo,
+		statusHistoryRepo: statusHistoryRepo,
 	}
 }
 
@@ -61,16 +68,16 @@ func NewAdminService(
 
 // DashboardStats 数据看板统计数据
 type DashboardStats struct {
-	TotalUsers          int64   `json:"total_users"`
-	TotalOrders         int64   `json:"total_orders"`
-	TotalReports        int64   `json:"total_reports"`
-	TotalRevenue        float64 `json:"total_revenue"`
-	TodayNewUsers       int64   `json:"today_new_users"`
-	TodayOrders         int64   `json:"today_orders"`
-	TodayRevenue        float64 `json:"today_revenue"`
-	PendingApplications int64   `json:"pending_applications"`
-	PendingReports      int64   `json:"pending_reports"`
-	PendingContentReports int64 `json:"pending_content_reports"`
+	TotalUsers            int64   `json:"total_users"`
+	TotalOrders           int64   `json:"total_orders"`
+	TotalReports          int64   `json:"total_reports"`
+	TotalRevenue          float64 `json:"total_revenue"`
+	TodayNewUsers         int64   `json:"today_new_users"`
+	TodayOrders           int64   `json:"today_orders"`
+	TodayRevenue          float64 `json:"today_revenue"`
+	PendingApplications   int64   `json:"pending_applications"`
+	PendingReports        int64   `json:"pending_reports"`
+	PendingContentReports int64   `json:"pending_content_reports"`
 }
 
 // GetDashboardStats 获取数据看板统计数据
@@ -275,8 +282,6 @@ func (s *AdminService) UpdateReportAIURL(reportID uint, reportURL, videoURL stri
 	return s.reportRepo.Update(reportID, updates)
 }
 
-
-
 // ========== Order Management ==========
 
 // GetAllOrders 获取所有订单
@@ -285,10 +290,13 @@ func (s *AdminService) GetAllOrders(page, pageSize int, status string) ([]models
 }
 
 // CancelOrder 取消订单
-func (s *AdminService) CancelOrder(orderID uint) error {
+func (s *AdminService) CancelOrder(orderID, adminID uint) error {
 	order, err := s.orderRepo.FindByID(orderID)
 	if err != nil {
 		return err
+	}
+	if order == nil {
+		return errors.New("订单不存在")
 	}
 
 	allowedStatuses := []models.OrderStatus{
@@ -308,11 +316,24 @@ func (s *AdminService) CancelOrder(orderID uint) error {
 		return errors.New("该订单状态不允许取消")
 	}
 
-	return s.orderRepo.UpdateStatus(orderID, models.OrderStatusCancelled)
+	return s.orderRepo.GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.Order{}).Where("id = ?", orderID).Updates(map[string]interface{}{
+			"status": models.OrderStatusCancelled,
+		}).Error; err != nil {
+			return err
+		}
+		if s.assignmentRepo != nil && order.AnalystID != nil {
+			now := time.Now()
+			if err := s.assignmentRepo.MarkLatestPendingWithTx(tx, orderID, *order.AnalystID, models.OrderAssignmentStatusExpired, "管理员取消订单", now); err != nil {
+				return err
+			}
+		}
+		return s.createStatusHistory(tx, orderID, order.Status, models.OrderStatusCancelled, adminID, "admin", "管理员取消订单")
+	})
 }
 
 // AssignOrder 管理员派单给分析师
-func (s *AdminService) AssignOrder(orderID, analystID uint) (*models.Order, error) {
+func (s *AdminService) AssignOrder(orderID, analystID, adminID uint) (*models.Order, error) {
 	order, err := s.orderRepo.FindByID(orderID)
 	if err != nil {
 		return nil, err
@@ -339,20 +360,72 @@ func (s *AdminService) AssignOrder(orderID, analystID uint) (*models.Order, erro
 	if order.OrderType == "pro" {
 		deadlineHours = 72
 	}
-	deadline := time.Now().Add(time.Duration(deadlineHours) * time.Hour)
+	assignedAt := time.Now()
+	deadline := assignedAt.Add(time.Duration(deadlineHours) * time.Hour)
 
 	updates := map[string]interface{}{
 		"analyst_id":  analystID,
 		"status":      models.OrderStatusAssigned,
-		"assigned_at": time.Now(),
+		"assigned_at": assignedAt,
 		"deadline":    deadline,
 	}
 
-	if err := s.orderRepo.Update(orderID, updates); err != nil {
+	if err := s.orderRepo.GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.Order{}).Where("id = ?", orderID).Updates(updates).Error; err != nil {
+			return err
+		}
+		if s.assignmentRepo != nil {
+			assignment := &models.OrderAssignment{
+				OrderID:    orderID,
+				AnalystID:  analystID,
+				AssignedBy: optionalActorID(adminID),
+				AssignedAt: assignedAt,
+				Status:     models.OrderAssignmentStatusPending,
+			}
+			if err := s.assignmentRepo.CreateWithTx(tx, assignment); err != nil {
+				return err
+			}
+		}
+		return s.createStatusHistory(tx, orderID, order.Status, models.OrderStatusAssigned, adminID, "admin", "管理员派发订单")
+	}); err != nil {
 		return nil, err
 	}
 
 	return s.orderRepo.FindByID(orderID)
+}
+
+// GetAssignmentRecords 获取订单派发历史
+func (s *AdminService) GetAssignmentRecords(page, pageSize int, status string) ([]models.OrderAssignment, int64, error) {
+	if status != "" && !models.IsValidOrderAssignmentStatus(status) {
+		return nil, 0, errors.New("无效的派发状态")
+	}
+	return s.assignmentRepo.FindAll(page, pageSize, status)
+}
+
+// GetOrderStatusHistory 获取订单状态流转历史
+func (s *AdminService) GetOrderStatusHistory(orderID uint) ([]models.OrderStatusHistory, error) {
+	return s.statusHistoryRepo.FindByOrderID(orderID)
+}
+
+func (s *AdminService) createStatusHistory(tx *gorm.DB, orderID uint, fromStatus, toStatus models.OrderStatus, actorID uint, actorRole, reason string) error {
+	if s.statusHistoryRepo == nil || fromStatus == toStatus {
+		return nil
+	}
+	return s.statusHistoryRepo.CreateWithTx(tx, &models.OrderStatusHistory{
+		OrderID:    orderID,
+		FromStatus: fromStatus,
+		ToStatus:   toStatus,
+		ActorID:    optionalActorID(actorID),
+		ActorRole:  actorRole,
+		Reason:     reason,
+	})
+}
+
+func optionalActorID(actorID uint) *uint {
+	if actorID == 0 {
+		return nil
+	}
+	return &actorID
 }
 
 // GetOrderStats 获取订单统计
@@ -640,6 +713,9 @@ func (s *AdminService) AdminLogin(username, password string) (string, *models.Us
 
 	if admin.Role != "admin" {
 		return "", nil, errors.New("无权限访问")
+	}
+	if admin.Status != models.StatusActive {
+		return "", nil, errors.New("账号未激活或已被禁用")
 	}
 
 	err = bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(password))

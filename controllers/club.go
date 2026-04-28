@@ -10,22 +10,22 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 	"github.com/shaonianqiutan/backend/models"
 	"github.com/shaonianqiutan/backend/repositories"
 	"github.com/shaonianqiutan/backend/services"
 	"github.com/shaonianqiutan/backend/utils"
+	"gorm.io/gorm"
 )
 
 // ClubController 俱乐部控制器
 type ClubController struct {
-	clubService        *services.ClubService
-	db                 *gorm.DB
-	weeklyReportRepo   *repositories.WeeklyReportRepository
-	matchSummaryRepo   *repositories.MatchSummaryRepository
-	orderRepo          *models.OrderRepository
+	clubService         *services.ClubService
+	db                  *gorm.DB
+	weeklyReportRepo    *repositories.WeeklyReportRepository
+	matchSummaryRepo    *repositories.MatchSummaryRepository
+	orderRepo           *models.OrderRepository
 	physicalTestService *services.PhysicalTestService
-	adminLogRepo       *repositories.AdminOperationLogRepository
+	adminLogRepo        *repositories.AdminOperationLogRepository
 }
 
 // NewClubController 创建俱乐部控制器
@@ -350,14 +350,14 @@ func (c *ClubController) GetPlayerSelection(ctx *gin.Context) {
 		c.db.Where("player_id = ? AND created_at >= ? AND review_status = ?", p.UserID, threeMonthsAgo, "approved").
 			Find(&reports)
 
-			var attitudeSum, techniqueSum, tacticsSum, knowledgeSum int
-			reportCount := len(reports)
-			for _, r := range reports {
-				attitudeSum += r.CoachAttitudeRating
-				techniqueSum += r.CoachTechniqueRating
-				tacticsSum += r.CoachTacticsRating
-				knowledgeSum += r.CoachKnowledgeRating
-			}
+		var attitudeSum, techniqueSum, tacticsSum, knowledgeSum int
+		reportCount := len(reports)
+		for _, r := range reports {
+			attitudeSum += r.CoachAttitudeRating
+			techniqueSum += r.CoachTechniqueRating
+			tacticsSum += r.CoachTacticsRating
+			knowledgeSum += r.CoachKnowledgeRating
+		}
 
 		weeklyAvg := gin.H{
 			"attitude":  0,
@@ -381,20 +381,20 @@ func (c *ClubController) GetPlayerSelection(ctx *gin.Context) {
 		c.db.Model(&models.MatchSummary{}).Where("? = ANY(player_ids)", p.UserID).Count(&matchCount)
 
 		list = append(list, gin.H{
-			"id":               p.ID,
-			"userId":           p.UserID,
-			"name":             p.User.Name,
-			"avatar":           p.User.Avatar,
-			"age":              p.User.Age,
-			"position":         p.Position,
-			"positionName":     models.GetPositionName(p.Position),
-			"ageGroup":         p.AgeGroup,
-			"joinDate":         utils.FormatTime(&p.JoinDate),
-			"tags":             tags,
-			"physicalTest":     testSummary,
-			"weeklyAverage":    weeklyAvg,
-			"matchCount":       matchCount,
-			"status":           p.Status,
+			"id":            p.ID,
+			"userId":        p.UserID,
+			"name":          p.User.Name,
+			"avatar":        p.User.Avatar,
+			"age":           p.User.Age,
+			"position":      p.Position,
+			"positionName":  models.GetPositionName(p.Position),
+			"ageGroup":      p.AgeGroup,
+			"joinDate":      utils.FormatTime(&p.JoinDate),
+			"tags":          tags,
+			"physicalTest":  testSummary,
+			"weeklyAverage": weeklyAvg,
+			"matchCount":    matchCount,
+			"status":        p.Status,
 		})
 	}
 
@@ -576,15 +576,15 @@ func (c *ClubController) GetPlayerDetail(ctx *gin.Context) {
 			coachName = ms.Coach.Name
 		}
 		matchSummaryList = append(matchSummaryList, gin.H{
-			"id":         ms.ID,
-			"matchName":  ms.MatchName,
-			"opponent":   ms.Opponent,
-			"matchDate":  ms.MatchDate,
-			"status":     ms.Status,
-			"teamName":   teamName,
-			"coachName":  coachName,
+			"id":          ms.ID,
+			"matchName":   ms.MatchName,
+			"opponent":    ms.Opponent,
+			"matchDate":   ms.MatchDate,
+			"status":      ms.Status,
+			"teamName":    teamName,
+			"coachName":   coachName,
 			"matchResult": ms.Result,
-			"createdAt":  utils.FormatDateTime(ms.CreatedAt),
+			"createdAt":   utils.FormatDateTime(ms.CreatedAt),
 		})
 	}
 
@@ -837,12 +837,12 @@ func (c *ClubController) GetAnalytics(ctx *gin.Context) {
 	if err != nil || club == nil {
 		utils.SuccessResponse(ctx, gin.H{
 			"playerDistribution": gin.H{
-				"byAgeGroup":   []interface{}{},
-				"byPosition":  []interface{}{},
+				"byAgeGroup": []interface{}{},
+				"byPosition": []interface{}{},
 			},
 			"abilityRadar": gin.H{
-				"labels":    []string{"速度", "力量", "耐力", "灵敏", "柔韧", "技术"},
-				"teamAvg":   []int{70, 65, 68, 67, 63, 72},
+				"labels":      []string{"速度", "力量", "耐力", "灵敏", "柔韧", "技术"},
+				"teamAvg":     []int{70, 65, 68, 67, 63, 72},
 				"platformAvg": []int{65, 60, 63, 62, 58, 68},
 			},
 			"topPerformers": []interface{}{},
@@ -861,10 +861,10 @@ func (c *ClubController) GetAnalytics(ctx *gin.Context) {
 
 	utils.SuccessResponse(ctx, gin.H{
 		"playerDistribution": gin.H{
-			"byAgeGroup":  ageGroupStats,
+			"byAgeGroup": ageGroupStats,
 			"byPosition": positionStats,
 		},
-		"abilityRadar":   abilityRadar,
+		"abilityRadar":  abilityRadar,
 		"topPerformers": topPerformers,
 	})
 }
@@ -1026,8 +1026,8 @@ func (c *ClubController) GetMatchSummaryStats(ctx *gin.Context) {
 	}
 
 	utils.SuccessResponse(ctx, gin.H{
-		"teams":      stats,
-		"clubTotal":  clubTotal,
+		"teams":     stats,
+		"clubTotal": clubTotal,
 	})
 }
 
@@ -1916,15 +1916,15 @@ func (c *ClubController) ListPublicClubs(ctx *gin.Context) {
 
 	// 组装返回数据（统计球员数和教练数）
 	type clubItem struct {
-		ID            uint   `json:"id"`
-		Name          string `json:"name"`
-		Logo          string `json:"logo"`
-		Description   string `json:"description"`
-		Address       string `json:"address"`
-		EstablishedYear int  `json:"established_year"`
-		PlayerCount   int    `json:"player_count"`
-		CoachCount    int    `json:"coach_count"`
-		CreatedAt     string `json:"created_at"`
+		ID              uint   `json:"id"`
+		Name            string `json:"name"`
+		Logo            string `json:"logo"`
+		Description     string `json:"description"`
+		Address         string `json:"address"`
+		EstablishedYear int    `json:"established_year"`
+		PlayerCount     int    `json:"player_count"`
+		CoachCount      int    `json:"coach_count"`
+		CreatedAt       string `json:"created_at"`
 	}
 
 	items := make([]clubItem, 0, len(clubs))
@@ -2064,11 +2064,11 @@ func (c *ClubController) GetClubDetail(ctx *gin.Context) {
 	c.db.Where("club_id = ? AND status = ?", club.ID, "active").Find(&teams)
 
 	type teamItem struct {
-		ID           uint   `json:"id"`
-		Name         string `json:"name"`
-		AgeGroup     string `json:"age_group"`
-		PlayerCount  int    `json:"player_count"`
-		CoachCount   int    `json:"coach_count"`
+		ID          uint   `json:"id"`
+		Name        string `json:"name"`
+		AgeGroup    string `json:"age_group"`
+		PlayerCount int    `json:"player_count"`
+		CoachCount  int    `json:"coach_count"`
 	}
 
 	teamItems := make([]teamItem, 0, len(teams))
@@ -2116,8 +2116,9 @@ func (c *ClubController) GetClubCoaches(ctx *gin.Context) {
 
 	status := ctx.Query("status")
 	keyword := ctx.Query("keyword")
-	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(ctx.DefaultQuery("pageSize", "20"))
+	pagination := utils.ParsePagination(ctx)
+	page := pagination.Page
+	pageSize := pagination.PageSize
 
 	coaches, total, err := c.clubService.GetClubCoaches(club.ID, status, keyword, page, pageSize)
 	if err != nil {
@@ -2173,9 +2174,9 @@ func (c *ClubController) AddClubCoach(ctx *gin.Context) {
 	}
 
 	var req struct {
-		UserID      uint              `json:"userId" binding:"required"`
-		PrimaryRole models.CoachRole  `json:"primaryRole"`
-		Notes       string            `json:"notes"`
+		UserID      uint             `json:"userId" binding:"required"`
+		PrimaryRole models.CoachRole `json:"primaryRole"`
+		Notes       string           `json:"notes"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.ValidationError(ctx, "参数错误: "+err.Error())
@@ -2455,8 +2456,8 @@ func (c *ClubController) CreateClubInvitation(ctx *gin.Context) {
 	}
 
 	var req struct {
-		Type        string `json:"type" binding:"required"`
-		TargetUserID *uint `json:"targetUserId"`
+		Type         string `json:"type" binding:"required"`
+		TargetUserID *uint  `json:"targetUserId"`
 		TargetPhone  string `json:"targetPhone"`
 		TargetRole   string `json:"targetRole"`
 	}
@@ -2675,8 +2676,8 @@ func (c *ClubController) GetClubInvitations(ctx *gin.Context) {
 		}
 		if inv.TargetUser != nil {
 			item["targetUser"] = gin.H{
-				"id":   inv.TargetUser.ID,
-				"name": inv.TargetUser.Name,
+				"id":    inv.TargetUser.ID,
+				"name":  inv.TargetUser.Name,
 				"phone": inv.TargetUser.Phone,
 			}
 		}

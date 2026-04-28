@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/shaonianqiutan/backend/models"
+	"github.com/shaonianqiutan/backend/wshub"
 	"gorm.io/gorm"
 )
 
@@ -30,9 +31,21 @@ func (h *NotificationHelper) CreateNotification(userID uint, notificationType mo
 		CreatedAt: time.Now(),
 	}
 	if link != "" {
-		notification.Data = `{"link":"` + link + `"}`
+		notification.SetData(&models.NotificationData{Link: link})
 	}
-	return h.db.Create(notification).Error
+	if err := h.db.Create(notification).Error; err != nil {
+		return err
+	}
+
+	wshub.GetNotifyService().SendNotification(userID, string(notificationType), wshub.NotificationPayload{
+		ID:        notification.ID,
+		Title:     notification.Title,
+		Content:   notification.Content,
+		Data:      notification.GetData(),
+		CreatedAt: notification.CreatedAt.Format(time.RFC3339),
+	})
+
+	return nil
 }
 
 // GetDBFromContext 获取 gin.Context 中的 db

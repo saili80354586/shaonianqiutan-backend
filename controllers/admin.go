@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shaonianqiutan/backend/config"
 	"github.com/shaonianqiutan/backend/models"
 	"github.com/shaonianqiutan/backend/services"
 	"github.com/shaonianqiutan/backend/utils"
@@ -17,12 +19,60 @@ import (
 
 // AdminController 管理后台控制器
 type AdminController struct {
-	adminService       *services.AdminService
+	adminService      *services.AdminService
 	videoAnalysisRepo *models.VideoAnalysisRepository
 }
 
 func NewAdminController(adminService *services.AdminService, videoAnalysisRepo *models.VideoAnalysisRepository) *AdminController {
 	return &AdminController{adminService: adminService, videoAnalysisRepo: videoAnalysisRepo}
+}
+
+func (ctrl *AdminController) GetSystemSettings(c *gin.Context) {
+	settings := models.LoadAdminSystemSettings(config.GetDB())
+	utils.Success(c, "", settings)
+}
+
+func (ctrl *AdminController) GetPublicSystemSettings(c *gin.Context) {
+	settings := models.LoadAdminSystemSettings(config.GetDB())
+	utils.Success(c, "", settings.Public())
+}
+
+func (ctrl *AdminController) UpdateSystemSettings(c *gin.Context) {
+	var req models.AdminSystemSettings
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if strings.TrimSpace(req.SiteName) == "" {
+		utils.Error(c, http.StatusBadRequest, "网站名称不能为空")
+		return
+	}
+	if req.DefaultAnalystPrice < 0 {
+		utils.Error(c, http.StatusBadRequest, "默认分析师价格不能小于0")
+		return
+	}
+	if req.CommissionRate < 0 || req.CommissionRate > 100 {
+		utils.Error(c, http.StatusBadRequest, "平台佣金比例必须在0到100之间")
+		return
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "设置序列化失败")
+		return
+	}
+
+	row := models.SystemSetting{
+		Key:       models.AdminSystemSettingKey,
+		Value:     string(payload),
+		UpdatedAt: time.Now(),
+	}
+	if err := config.GetDB().Where("key = ?", models.AdminSystemSettingKey).Assign(row).FirstOrCreate(&row).Error; err != nil {
+		utils.Error(c, http.StatusInternalServerError, "保存系统设置失败")
+		return
+	}
+
+	utils.Success(c, "系统设置已保存", req)
 }
 
 // DownloadVideoAnalysisDoc 管理员下载视频分析 MD 文档
@@ -83,22 +133,11 @@ func (ctrl *AdminController) GetDashboardStats(c *gin.Context) {
 
 // GetGrowthData 获取增长数据
 func (ctrl *AdminController) GetGrowthData(c *gin.Context) {
-	days, _ := strconv.Atoi(c.DefaultQuery("days", "30"))
+	days := utils.ParseIntQuery(c, "days", 30, 1, 365)
 
 	data, err := ctrl.adminService.GetGrowthData(days)
 	if err != nil {
-		// 返回模拟数据
-		var mockData []gin.H
-		for i := days - 1; i >= 0; i-- {
-			date := time.Now().AddDate(0, 0, -i)
-			mockData = append(mockData, gin.H{
-				"date":    date.Format("01-02"),
-				"users":   10 + i*2,
-				"orders":  5 + i,
-				"revenue": 1000 + i*100,
-			})
-		}
-		utils.Success(c, "", mockData)
+		utils.Error(c, http.StatusInternalServerError, "获取增长数据失败")
 		return
 	}
 
@@ -172,6 +211,47 @@ func (ctrl *AdminController) GetAllOrders(c *gin.Context) {
 		"total":    total,
 		"page":     page,
 		"pageSize": pageSize,
+	})
+}
+
+// GetAssignmentRecords 获取订单派发记录
+func (ctrl *AdminController) GetAssignmentRecords(c *gin.Context) {
+	pagination := utils.ParsePaginationWithSize(c, 10)
+	page := pagination.Page
+	pageSize := pagination.PageSize
+	status := c.DefaultQuery("status", "")
+
+	assignments, total, err := ctrl.adminService.GetAssignmentRecords(page, pageSize, status)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "获取派发记录失败: "+err.Error())
+		return
+	}
+
+	utils.Success(c, "", gin.H{
+		"list":     assignments,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
+}
+
+// GetOrderStatusHistory 获取订单状态流转历史
+func (ctrl *AdminController) GetOrderStatusHistory(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的订单ID")
+		return
+	}
+
+	histories, err := ctrl.adminService.GetOrderStatusHistory(uint(id))
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取状态历史失败")
+		return
+	}
+
+	utils.Success(c, "", gin.H{
+		"list": histories,
 	})
 }
 
@@ -472,9 +552,8 @@ func (ctrl *AdminController) AssignOrder(c *gin.Context) {
 		return
 	}
 
-	// 通过 adminService 获取 orderService（需要确认 adminService 是否有该方法）
-	// 由于 AdminController 只有 adminService，这里需要调用 adminService 的 AssignOrder
-	order, err := ctrl.adminService.AssignOrder(uint(id), req.AnalystID)
+	adminID := c.GetUint("adminId")
+	order, err := ctrl.adminService.AssignOrder(uint(id), req.AnalystID, adminID)
 	if err != nil {
 		utils.Error(c, http.StatusBadRequest, "派单失败: "+err.Error())
 		return
@@ -492,7 +571,8 @@ func (ctrl *AdminController) CancelOrder(c *gin.Context) {
 		return
 	}
 
-	err = ctrl.adminService.CancelOrder(uint(id))
+	adminID := c.GetUint("adminId")
+	err = ctrl.adminService.CancelOrder(uint(id), adminID)
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "取消订单失败: "+err.Error())
 		return
@@ -607,7 +687,7 @@ func (ctrl *AdminController) GetFunnelData(c *gin.Context) {
 
 // GetRetentionData 获取留存数据
 func (ctrl *AdminController) GetRetentionData(c *gin.Context) {
-	days, _ := strconv.Atoi(c.DefaultQuery("days", "30"))
+	days := utils.ParseIntQuery(c, "days", 30, 1, 365)
 	data, err := ctrl.adminService.GetRetentionData(days)
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "获取留存数据失败")
@@ -638,7 +718,7 @@ func (ctrl *AdminController) GetOrderStats(c *gin.Context) {
 
 // GetRevenueTrend 获取收入趋势
 func (ctrl *AdminController) GetRevenueTrend(c *gin.Context) {
-	days, _ := strconv.Atoi(c.DefaultQuery("days", "30"))
+	days := utils.ParseIntQuery(c, "days", 30, 1, 365)
 	data, err := ctrl.adminService.GetRevenueTrend(days)
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "获取收入趋势失败")
@@ -1211,7 +1291,7 @@ func (ctrl *AdminController) GetLoginLogs(c *gin.Context) {
 
 // GetLoginLogStats 获取登录日志统计
 func (ctrl *AdminController) GetLoginLogStats(c *gin.Context) {
-	days, _ := strconv.Atoi(c.DefaultQuery("days", "7"))
+	days := utils.ParseIntQuery(c, "days", 7, 1, 365)
 	stats, err := ctrl.adminService.GetLoginLogStats(days)
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "获取登录日志统计失败")

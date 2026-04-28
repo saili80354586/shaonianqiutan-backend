@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/shaonianqiutan/backend/models"
@@ -32,17 +33,17 @@ func (s *ScoutService) GetOrCreateScout(userID uint) (*models.Scout, error) {
 
 	// 创建新的球探记录
 	scout = models.Scout{
-		UserID:             userID,
-		ScoutingExperience: "",
-		Specialties:        "[]",
+		UserID:              userID,
+		ScoutingExperience:  "",
+		Specialties:         "[]",
 		PreferredAgeGroups:  "[]",
-		ScoutingRegions:    "[]",
+		ScoutingRegions:     "[]",
 		CurrentOrganization: "",
-		Bio:                "",
-		Verified:           false,
-		TotalDiscovered:    0,
+		Bio:                 "",
+		Verified:            false,
+		TotalDiscovered:     0,
 		TotalReports:        0,
-		TotalAdopted:       0,
+		TotalAdopted:        0,
 	}
 	if err := s.db.Create(&scout).Error; err != nil {
 		return nil, err
@@ -117,13 +118,13 @@ func (s *ScoutService) GetScoutDashboard(userID uint) (map[string]interface{}, e
 	s.db.Where("status = ?", "open").Order("deadline ASC").Limit(5).Find(&openTasks)
 
 	return map[string]interface{}{
-		"total_discovered":    scout.TotalDiscovered,
-		"total_reports":      totalReports,
-		"published_reports":   publishedReports,
-		"adopted_reports":    adoptedReports,
-		"followed_players":   followedPlayers,
-		"recent_reports":     recentReports,
-		"available_tasks":    openTasks,
+		"total_discovered":  scout.TotalDiscovered,
+		"total_reports":     totalReports,
+		"published_reports": publishedReports,
+		"adopted_reports":   adoptedReports,
+		"followed_players":  followedPlayers,
+		"recent_reports":    recentReports,
+		"available_tasks":   openTasks,
 	}, nil
 }
 
@@ -378,12 +379,58 @@ func (s *ScoutService) PublishScoutReport(userID, reportID uint) (*models.ScoutR
 	now := time.Now()
 	if err := s.db.Model(&report).Updates(map[string]interface{}{
 		"status":       "published",
-		"published_at":  &now,
+		"published_at": &now,
 	}).Error; err != nil {
 		return nil, err
 	}
+	report.Status = "published"
+	report.PublishedAt = &now
+
+	s.notifyScoutReportPublished(userID, report)
 
 	return &report, nil
+}
+
+func (s *ScoutService) notifyScoutReportPublished(userID uint, report models.ScoutReport) {
+	var scoutUser models.User
+	scoutName := "球探"
+	if err := s.db.Select("id, name, nickname, avatar").First(&scoutUser, userID).Error; err == nil {
+		scoutName = scoutServiceUserDisplayName(scoutUser)
+	}
+
+	notification := models.Notification{
+		UserID:    report.PlayerID,
+		Type:      models.NotificationTypeScoutReport,
+		Title:     "收到新的球探报告",
+		Content:   fmt.Sprintf("%s 发布了一份关于你的球探报告。", scoutName),
+		IsRead:    false,
+		Priority:  3,
+		CreatedAt: time.Now(),
+	}
+	notification.SetData(&models.NotificationData{
+		TriggerUserID:   userID,
+		TriggerUserName: scoutName,
+		TriggerAvatar:   scoutUser.Avatar,
+		TargetType:      "scout_report",
+		TargetID:        report.ID,
+		ReportID:        report.ID,
+		ReportTitle:     report.Summary,
+		Link:            fmt.Sprintf("/personal-homepage/%d", report.PlayerID),
+	})
+	_ = s.db.Create(&notification).Error
+}
+
+func scoutServiceUserDisplayName(user models.User) string {
+	if user.Nickname != "" {
+		return user.Nickname
+	}
+	if user.Name != "" {
+		return user.Name
+	}
+	if user.ID == 0 {
+		return ""
+	}
+	return fmt.Sprintf("用户%d", user.ID)
 }
 
 // DeleteScoutReport 删除球探报告
@@ -449,10 +496,11 @@ func (s *ScoutService) SearchPlayers(keyword string, position, region string, pa
 	var players []models.Player
 	var total int64
 
-	query := s.db.Model(&models.Player{})
+	query := s.db.Model(&models.Player{}).Where("status = ?", 1)
 
 	if keyword != "" {
-		query = query.Where("nickname LIKE ? OR real_name LIKE ?", "%"+keyword+"%", "%"+keyword+"%")
+		like := "%" + keyword + "%"
+		query = query.Where("nickname LIKE ? OR name LIKE ? OR club LIKE ? OR school LIKE ?", like, like, like, like)
 	}
 	if position != "" {
 		query = query.Where("position = ?", position)
@@ -464,7 +512,7 @@ func (s *ScoutService) SearchPlayers(keyword string, position, region string, pa
 	query.Count(&total)
 
 	offset := (page - 1) * pageSize
-	if err := query.Preload("User").Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&players).Error; err != nil {
+	if err := query.Order("create_time DESC").Offset(offset).Limit(pageSize).Find(&players).Error; err != nil {
 		return nil, 0, err
 	}
 
@@ -473,9 +521,9 @@ func (s *ScoutService) SearchPlayers(keyword string, position, region string, pa
 
 // GetScoutPublicProfile 获取球探公开主页数据
 type ScoutPublicProfile struct {
-	Scout         *ScoutPublicInfo  `json:"scout"`
-	User          *models.User      `json:"user,omitempty"`
-	Stats         ScoutPublicStats  `json:"stats"`
+	Scout         *ScoutPublicInfo    `json:"scout"`
+	User          *models.User        `json:"user,omitempty"`
+	Stats         ScoutPublicStats    `json:"stats"`
 	SampleReports []ScoutPublicReport `json:"sample_reports"`
 }
 
@@ -499,18 +547,18 @@ type ScoutPublicInfo struct {
 
 type ScoutPublicStats struct {
 	TotalDiscovered  int64 `json:"total_discovered"`
-	TotalReports    int64 `json:"total_reports"`
+	TotalReports     int64 `json:"total_reports"`
 	PublishedReports int64 `json:"published_reports"`
 	FollowedPlayers  int64 `json:"followed_players"`
 }
 
 type ScoutPublicReport struct {
-	ID               uint   `json:"id"`
-	PlayerName       string `json:"player_name"`
-	OverallRating    int    `json:"overall_rating"`
+	ID              uint   `json:"id"`
+	PlayerName      string `json:"player_name"`
+	OverallRating   int    `json:"overall_rating"`
 	PotentialRating string `json:"potential_rating"`
-	Title            string `json:"title"`
-	CreatedAt        string `json:"created_at"`
+	Title           string `json:"title"`
+	CreatedAt       string `json:"created_at"`
 }
 
 func (s *ScoutService) GetScoutPublicProfile(scoutID uint) (*ScoutPublicProfile, error) {
@@ -548,7 +596,7 @@ func (s *ScoutService) GetScoutPublicProfile(scoutID uint) (*ScoutPublicProfile,
 		}
 		sampleReports = append(sampleReports, ScoutPublicReport{
 			ID:              r.ID,
-			PlayerName:       playerName,
+			PlayerName:      playerName,
 			OverallRating:   r.OverallRating,
 			PotentialRating: r.PotentialRating,
 			Title:           r.Summary,
@@ -578,12 +626,12 @@ func (s *ScoutService) GetScoutPublicProfile(scoutID uint) (*ScoutPublicProfile,
 			CreatedAt:           scout.CreatedAt.Format("2006-01-02T15:04:05Z"),
 			UpdatedAt:           scout.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 		},
-		User:  scout.User,
+		User: scout.User,
 		Stats: ScoutPublicStats{
 			TotalDiscovered:  int64(scout.TotalDiscovered),
 			TotalReports:     totalReports,
 			PublishedReports: publishedReports,
-			FollowedPlayers: followedPlayers,
+			FollowedPlayers:  followedPlayers,
 		},
 		SampleReports: sampleReports,
 	}, nil

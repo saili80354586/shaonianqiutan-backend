@@ -13,9 +13,9 @@ import (
 
 // NotificationService 通知服务
 type NotificationService struct {
-	db              *gorm.DB
+	db               *gorm.DB
 	notificationRepo *repositories.NotificationRepository
-	userRepo        *models.UserRepository
+	userRepo         *models.UserRepository
 }
 
 // NewNotificationService 创建通知服务
@@ -25,9 +25,9 @@ func NewNotificationService(
 	userRepo *models.UserRepository,
 ) *NotificationService {
 	return &NotificationService{
-		db:              db,
+		db:               db,
 		notificationRepo: notificationRepo,
-		userRepo:        userRepo,
+		userRepo:         userRepo,
 	}
 }
 
@@ -64,6 +64,7 @@ func (s *NotificationService) sendWebSocketNotification(userID uint, notificatio
 		ID:        notification.ID,
 		Title:     notification.Title,
 		Content:   notification.Content,
+		Data:      notification.GetData(),
 		CreatedAt: notification.CreatedAt.Format(time.RFC3339),
 	}
 
@@ -123,6 +124,7 @@ func (s *NotificationService) CreateBatchNotifications(userIDs []uint, notificat
 				ID:        notification.ID,
 				Title:     notification.Title,
 				Content:   notification.Content,
+				Data:      notification.GetData(),
 				CreatedAt: notification.CreatedAt.Format(time.RFC3339),
 			}
 			notifyService.SendNotification(notification.UserID, string(notificationType), payload)
@@ -177,13 +179,13 @@ func (s *NotificationService) NotifyWeeklyReportApproved(playerID uint, coachNam
 func (s *NotificationService) NotifyWeeklyReportReminder(playerID uint, hoursRemaining int, reportCount int, reportIDs []uint) error {
 	title := "周报即将截止"
 	content := "您有 " + itoa(reportCount) + " 篇周报将在 " + itoa(hoursRemaining) + " 小时后截止，请尽快提交"
-	
+
 	// 构建链接列表
 	var links []string
 	for _, id := range reportIDs {
 		links = append(links, "/weekly-reports/"+itoa(int(id))+"/edit")
 	}
-	
+
 	data := &models.NotificationData{
 		TargetType: "weekly_report",
 		TargetIDs:  reportIDs,
@@ -203,12 +205,12 @@ func (s *NotificationService) NotifyWeeklyReportReminderBatch(reminders map[uint
 	for playerID, info := range reminders {
 		title := "周报即将截止"
 		content := "您有 " + itoa(info.ReportCount) + " 篇周报将在 " + itoa(info.HoursRemaining) + " 小时后截止，请尽快提交"
-		
+
 		var links []string
 		for _, id := range info.ReportIDs {
 			links = append(links, "/weekly-reports/"+itoa(int(id))+"/edit")
 		}
-		
+
 		data := &models.NotificationData{
 			TargetType: "weekly_report",
 			TargetIDs:  info.ReportIDs,
@@ -219,7 +221,7 @@ func (s *NotificationService) NotifyWeeklyReportReminderBatch(reminders map[uint
 				"links":           links,
 			},
 		}
-		
+
 		notification := &models.Notification{
 			UserID:    playerID,
 			Type:      models.NotificationTypeWeeklyReportReminder,
@@ -230,12 +232,12 @@ func (s *NotificationService) NotifyWeeklyReportReminderBatch(reminders map[uint
 			CreatedAt: time.Now(),
 		}
 		notification.SetData(data)
-		
+
 		if err := s.notificationRepo.Create(notification); err != nil {
 			log.Printf("创建提醒通知失败 (player %d): %v", playerID, err)
 			continue
 		}
-		
+
 		// WebSocket 推送
 		go s.sendWebSocketNotification(playerID, models.NotificationTypeWeeklyReportReminder, notification)
 	}

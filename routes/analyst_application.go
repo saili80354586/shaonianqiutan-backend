@@ -22,6 +22,7 @@ func SetupAnalystApplicationRoutes(
 	// 管理后台路由
 	admin := r.Group("/admin/applications")
 	admin.Use(middleware.AuthMiddleware())
+	admin.Use(middleware.AdminRoleMiddleware())
 	{
 		admin.GET("/", appController.GetApplicationList)
 		admin.POST("/:id/review", appController.ReviewApplication)

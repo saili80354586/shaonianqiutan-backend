@@ -26,5 +26,6 @@ func SetupPlayerRoutes(r *gin.RouterGroup, playerController *controllers.PlayerC
 // SetupPlayerPublicRoutes 设置球员公开路由（无需认证）
 func SetupPlayerPublicRoutes(r *gin.RouterGroup, playerController *controllers.PlayerController) {
 	r.GET("/players/:playerId/public", playerController.GetPlayerPublicProfile)
+	r.GET("/players/:playerId/homepage", playerController.GetHomepage)
 	r.GET("/players/:playerId/physical-tests", playerController.GetPublicPhysicalTests)
 }

@@ -14,9 +14,11 @@ import (
 
 // AnalystService 分析师服务
 type AnalystService struct {
-	analystRepo *models.AnalystRepository
-	orderRepo   *models.OrderRepository
-	userRepo    *models.UserRepository
+	analystRepo       *models.AnalystRepository
+	orderRepo         *models.OrderRepository
+	userRepo          *models.UserRepository
+	assignmentRepo    *models.OrderAssignmentRepository
+	statusHistoryRepo *models.OrderStatusHistoryRepository
 }
 
 // NewAnalystService 创建分析师服务
@@ -24,11 +26,15 @@ func NewAnalystService(
 	analystRepo *models.AnalystRepository,
 	orderRepo *models.OrderRepository,
 	userRepo *models.UserRepository,
+	assignmentRepo *models.OrderAssignmentRepository,
+	statusHistoryRepo *models.OrderStatusHistoryRepository,
 ) *AnalystService {
 	return &AnalystService{
-		analystRepo: analystRepo,
-		orderRepo:   orderRepo,
-		userRepo:    userRepo,
+		analystRepo:       analystRepo,
+		orderRepo:         orderRepo,
+		userRepo:          userRepo,
+		assignmentRepo:    assignmentRepo,
+		statusHistoryRepo: statusHistoryRepo,
 	}
 }
 
@@ -181,7 +187,7 @@ func (s *AnalystService) UpdateAnalystProfile(analystID uint, req *UpdateProfile
 		"name":          req.Name,
 		"bio":           req.Bio,
 		"specialty":     req.Specialty,
-		"experience":     req.Experience,
+		"experience":    req.Experience,
 		"profession":    req.Profession,
 		"is_pro_player": req.IsProPlayer,
 		"has_case":      req.HasCase,
@@ -223,21 +229,21 @@ type AnalystPublicInfo struct {
 }
 
 type PublicStats struct {
-	TotalReports   int64   `json:"total_reports"`
-	CompletedReports int64 `json:"completed_reports"`
-	AverageRating float64  `json:"average_rating"`
-	ReviewCount  int64   `json:"review_count"`
+	TotalReports     int64   `json:"total_reports"`
+	CompletedReports int64   `json:"completed_reports"`
+	AverageRating    float64 `json:"average_rating"`
+	ReviewCount      int64   `json:"review_count"`
 }
 
 type PublicReport struct {
-	ID              uint    `json:"id"`
-	PlayerName      string  `json:"player_name"`
-	PlayerPosition  string  `json:"player_position"`
-	Title           string  `json:"title"`
-	Summary         string  `json:"summary"`
-	OverallRating   int     `json:"overall_rating"`
-	PotentialRating string  `json:"potential_rating"`
-	CreatedAt       string  `json:"created_at"`
+	ID              uint   `json:"id"`
+	PlayerName      string `json:"player_name"`
+	PlayerPosition  string `json:"player_position"`
+	Title           string `json:"title"`
+	Summary         string `json:"summary"`
+	OverallRating   int    `json:"overall_rating"`
+	PotentialRating string `json:"potential_rating"`
+	CreatedAt       string `json:"created_at"`
 }
 
 func (s *AnalystService) GetAnalystPublicProfile(analystID uint) (*AnalystPublicProfile, error) {
@@ -456,7 +462,17 @@ func (s *AnalystService) AcceptOrder(analystID, orderID uint) error {
 		"status":      models.OrderStatusProcessing,
 		"accepted_at": &now,
 	}
-	return s.orderRepo.Update(orderID, updates)
+	return s.orderRepo.GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.Order{}).Where("id = ?", orderID).Updates(updates).Error; err != nil {
+			return err
+		}
+		if s.assignmentRepo != nil {
+			if err := s.assignmentRepo.MarkLatestPendingWithTx(tx, orderID, analystID, models.OrderAssignmentStatusAccepted, "", now); err != nil {
+				return err
+			}
+		}
+		return s.createStatusHistory(tx, orderID, order.Status, models.OrderStatusProcessing, analystID, "analyst", "分析师接单")
+	})
 }
 
 // RejectOrder 分析师拒绝订单
@@ -476,10 +492,39 @@ func (s *AnalystService) RejectOrder(analystID, orderID uint, reason string) err
 	}
 
 	updates := map[string]interface{}{
-		"status":        models.OrderStatusCancelled,
+		"status":        models.OrderStatusUploaded,
+		"analyst_id":    nil,
+		"assigned_at":   nil,
+		"accepted_at":   nil,
+		"deadline":      nil,
 		"cancel_reason": reason,
 	}
-	return s.orderRepo.Update(orderID, updates)
+	now := time.Now()
+	return s.orderRepo.GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.Order{}).Where("id = ?", orderID).Updates(updates).Error; err != nil {
+			return err
+		}
+		if s.assignmentRepo != nil {
+			if err := s.assignmentRepo.MarkLatestPendingWithTx(tx, orderID, analystID, models.OrderAssignmentStatusRejected, reason, now); err != nil {
+				return err
+			}
+		}
+		return s.createStatusHistory(tx, orderID, order.Status, models.OrderStatusUploaded, analystID, "analyst", reason)
+	})
+}
+
+func (s *AnalystService) createStatusHistory(tx *gorm.DB, orderID uint, fromStatus, toStatus models.OrderStatus, actorID uint, actorRole, reason string) error {
+	if s.statusHistoryRepo == nil || fromStatus == toStatus {
+		return nil
+	}
+	return s.statusHistoryRepo.CreateWithTx(tx, &models.OrderStatusHistory{
+		OrderID:    orderID,
+		FromStatus: fromStatus,
+		ToStatus:   toStatus,
+		ActorID:    optionalActorID(actorID),
+		ActorRole:  actorRole,
+		Reason:     reason,
+	})
 }
 
 // IncomeDetailItem 收益明细项
@@ -496,11 +541,11 @@ type IncomeDetailItem struct {
 
 // IncomeDetailsResult 收益明细结果
 type IncomeDetailsResult struct {
-	List    []IncomeDetailItem `json:"list"`
-	Summary IncomeSummary      `json:"summary"`
-	Total   int64              `json:"total"`
-	Page    int                `json:"page"`
-	PageSize int               `json:"pageSize"`
+	List     []IncomeDetailItem `json:"list"`
+	Summary  IncomeSummary      `json:"summary"`
+	Total    int64              `json:"total"`
+	Page     int                `json:"page"`
+	PageSize int                `json:"pageSize"`
 }
 
 // IncomeSummary 收益摘要
@@ -539,7 +584,7 @@ func (s *AnalystService) GetIncomeDetails(analystID uint, startDate, endDate str
 			PlayerName:  order.PlayerName,
 		})
 		totalIncome += netIncome
-		if order.OrderType == "text" {
+		if order.OrderType == "basic" || order.OrderType == "text" {
 			textCount++
 			textIncome += netIncome
 		} else {
@@ -583,13 +628,13 @@ func (s *AnalystService) GetIncomeTrend(analystID uint, startDate, endDate strin
 
 // SubmitReportRequest 提交报告请求
 type SubmitReportRequest struct {
-	Ratings     map[string]interface{} `json:"ratings"`
-	Summary     string                 `json:"summary"`
-	Suggestions string                 `json:"suggestions"`
-	Potential   string                 `json:"potential"`
-	Strengths   []string               `json:"strengths"`
-	Weaknesses  []string               `json:"weaknesses"`
-	ClipVideoURL string                `json:"clip_video_url,omitempty"`
+	Ratings      map[string]interface{} `json:"ratings"`
+	Summary      string                 `json:"summary"`
+	Suggestions  string                 `json:"suggestions"`
+	Potential    string                 `json:"potential"`
+	Strengths    []string               `json:"strengths"`
+	Weaknesses   []string               `json:"weaknesses"`
+	ClipVideoURL string                 `json:"clip_video_url,omitempty"`
 }
 
 // SubmitReport 提交报告（带事务和文档生成）
@@ -664,23 +709,23 @@ func (s *AnalystService) SubmitReport(analystID, orderID uint, req *SubmitReport
 	weaknessesJSON := stringifyJSON(req.Weaknesses)
 
 	report := &models.Report{
-		OrderID:       orderID,
-		UserID:        order.UserID,
-		AnalystID:     analystID,
-		PlayerName:    order.PlayerName,
+		OrderID:        orderID,
+		UserID:         order.UserID,
+		AnalystID:      analystID,
+		PlayerName:     order.PlayerName,
 		PlayerPosition: order.PlayerPosition,
-		Content:       req.Summary,
-		OverallRating: overallRating,
-		OffenseRating: offenseRating,
-		DefenseRating: defenseRating,
-		Summary:       req.Summary,
-		Strengths:     strengthsJSON,
-		Weaknesses:    weaknessesJSON,
-		Suggestions:   req.Suggestions,
-		Potential:     req.Potential,
-		ClipVideoURL:  req.ClipVideoURL,
-		RatingDetails: ratingDetailsJSON,
-		Status:        models.ReportStatusCompleted,
+		Content:        req.Summary,
+		OverallRating:  overallRating,
+		OffenseRating:  offenseRating,
+		DefenseRating:  defenseRating,
+		Summary:        req.Summary,
+		Strengths:      strengthsJSON,
+		Weaknesses:     weaknessesJSON,
+		Suggestions:    req.Suggestions,
+		Potential:      req.Potential,
+		ClipVideoURL:   req.ClipVideoURL,
+		RatingDetails:  ratingDetailsJSON,
+		Status:         models.ReportStatusCompleted,
 	}
 
 	// 生成 MD 文档（失败不阻塞主流程）

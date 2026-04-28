@@ -23,6 +23,7 @@ import (
 func main() {
 	// 加载环境变量
 	config.LoadEnv()
+	config.ValidateRuntimeConfig()
 
 	// 初始化数据库
 	config.InitDB()
@@ -35,6 +36,8 @@ func main() {
 		&models.SmsCode{},
 		&models.Report{},
 		&models.Order{},
+		&models.OrderAssignment{},
+		&models.OrderStatusHistory{},
 		&models.AnalystApplication{},
 		&models.Club{},
 		&models.ClubPlayer{},
@@ -84,11 +87,15 @@ func main() {
 		&models.Banner{},
 		&models.FAQ{},
 		&models.LoginLog{},
+		&models.SystemSetting{},
 	)
 	if err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
 	log.Println("数据库迁移完成")
+	if err := models.BackfillOrderAssignmentsFromOrders(db); err != nil {
+		log.Printf("订单派发记录回填失败: %v", err)
+	}
 
 	// 初始化 WebSocket Hub
 	hub := wshub.NewHub()
@@ -101,7 +108,11 @@ func main() {
 
 	// 创建 Gin 引擎
 	if os.Getenv("GIN_MODE") == "" {
-		gin.SetMode(gin.DebugMode)
+		if config.IsDevMode() {
+			gin.SetMode(gin.DebugMode)
+		} else {
+			gin.SetMode(gin.ReleaseMode)
+		}
 	}
 	r := gin.Default()
 
@@ -137,6 +148,7 @@ func main() {
 
 		c.Next()
 	})
+	r.Use(middleware.MaintenanceModeMiddleware())
 
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {
@@ -147,7 +159,7 @@ func main() {
 	})
 
 	// WebSocket 路由（需要认证）
-	r.GET("/ws", middleware.AuthMiddleware(), func(c *gin.Context) {
+	r.GET("/ws", middleware.QueryTokenAuthMiddleware(), func(c *gin.Context) {
 		userID, exists := c.Get("userId")
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
@@ -158,7 +170,16 @@ func main() {
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 			CheckOrigin: func(r *http.Request) bool {
-				return true
+				origin := r.Header.Get("Origin")
+				if origin == "" {
+					return true
+				}
+				for _, allowedOrigin := range allowedOrigins {
+					if origin == allowedOrigin {
+						return true
+					}
+				}
+				return config.IsDevMode() && (strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1"))
 			},
 		}
 
@@ -188,6 +209,8 @@ func main() {
 		orderRepo := models.NewOrderRepository(db)
 		reportRepo := models.NewReportRepository(db)
 		analystRepo := models.NewAnalystRepository(db)
+		assignmentRepo := models.NewOrderAssignmentRepository(db)
+		statusHistoryRepo := models.NewOrderStatusHistoryRepository(db)
 		analystApplicationRepo := models.NewAnalystApplicationRepository(db)
 		smsCodeRepo := models.NewSmsCodeRepository(db)
 
@@ -213,7 +236,7 @@ func main() {
 		authService := services.NewAuthService(userRepo, smsService, db)
 		orderService := services.NewOrderService(orderRepo, analystRepo, reportRepo, userRepo)
 		reportService := services.NewReportService(reportRepo, userRepo)
-		analystService := services.NewAnalystService(analystRepo, orderRepo, userRepo)
+		analystService := services.NewAnalystService(analystRepo, orderRepo, userRepo, assignmentRepo, statusHistoryRepo)
 		clubService := services.NewClubService(db)
 		scoutService := services.NewScoutService(db)
 		coachService := services.NewCoachService(db, teamRepo, weeklyReportRepo, matchSummaryRepo)
@@ -226,7 +249,7 @@ func main() {
 		socialService := services.NewSocialService(socialRepo, notificationService)
 		messageService := services.NewMessageService(messageRepo, userRepo, socialRepo, notificationService)
 		videoAnalysisRepo := models.NewVideoAnalysisRepository(db)
-		adminService := services.NewAdminService(userRepo, reportRepo, orderRepo, analystRepo, analystApplicationRepo, contentReportRepo, sensitiveWordRepo, platformAnnRepo, bannerRepo, faqRepo, loginLogRepo, videoAnalysisRepo)
+		adminService := services.NewAdminService(userRepo, reportRepo, orderRepo, analystRepo, analystApplicationRepo, contentReportRepo, sensitiveWordRepo, platformAnnRepo, bannerRepo, faqRepo, loginLogRepo, videoAnalysisRepo, assignmentRepo, statusHistoryRepo)
 
 		// ========== Controller 初始化 ==========
 		authController := controllers.NewAuthController(authService, smsService)
@@ -288,6 +311,7 @@ func main() {
 		routes.SetupSocialRoutes(socialApiGroup, socialController)
 		routes.SetupMessageRoutes(api, messageController)
 		routes.SetupAdminRoutes(api, adminController)
+		routes.SetupSystemRoutes(api, adminController)
 		routes.SetupScoutRoutes(api, scoutController)
 		routes.SetupScoutMapRoutes(api, mapController)
 		routes.SetupTrialInviteRoutes(api, trialInviteController)

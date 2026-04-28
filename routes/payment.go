@@ -2,6 +2,7 @@ package routes
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/shaonianqiutan/backend/config"
 	"github.com/shaonianqiutan/backend/controllers"
 	"github.com/shaonianqiutan/backend/middleware"
 )
@@ -12,7 +13,9 @@ func SetupPaymentRoutes(r *gin.RouterGroup, paymentController *controllers.Payme
 	payment.Use(middleware.AuthMiddleware())
 	{
 		payment.POST("/", paymentController.CreatePayment)
-		payment.POST("/simulate", paymentController.SimulatePay)
+		if config.IsDevMode() {
+			payment.POST("/simulate", paymentController.SimulatePay)
+		}
 		payment.GET("/:id", paymentController.GetPaymentStatus)
 		payment.POST("/callback", paymentController.PaymentCallback)
 		payment.POST("/:id/refund", paymentController.Refund)

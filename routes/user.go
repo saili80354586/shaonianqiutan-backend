@@ -16,6 +16,8 @@ func SetupUserRoutes(r *gin.RouterGroup, userController *controllers.UserControl
 		user.PUT("/profile", userController.UpdateProfile)
 		user.GET("/growth-records", userController.GetGrowthRecords)
 		user.POST("/growth-records", userController.SaveGrowthRecords)
+		user.PUT("/growth-records/:id", userController.UpdateGrowthRecord)
+		user.DELETE("/growth-records/:id", userController.DeleteGrowthRecord)
 		// 账号设置
 		user.PUT("/password", userController.ChangePassword)
 		user.PUT("/phone", userController.ChangePhone)

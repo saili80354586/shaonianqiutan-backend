@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/shaonianqiutan/backend/models"
@@ -251,22 +252,30 @@ func (s *ClubService) GetPlayers(clubID uint, page, pageSize int, keyword, ageGr
 	// 统计总数
 	query.Count(&total)
 
-	// 排序字段映射（兼容前端驼峰命名）
+	// 排序字段白名单（兼容前端驼峰命名）
 	sortFieldMap := map[string]string{
-		"createdAt": "created_at",
-		"updatedAt": "updated_at",
-		"joinDate":  "join_date",
-		"ageGroup":  "age_group",
-		"position":  "position",
-		"status":    "status",
-		"id":        "id",
-		"name":      "name",
+		"createdAt":  "created_at",
+		"created_at": "created_at",
+		"updatedAt":  "updated_at",
+		"updated_at": "updated_at",
+		"joinDate":   "join_date",
+		"join_date":  "join_date",
+		"ageGroup":   "age_group",
+		"age_group":  "age_group",
+		"position":   "position",
+		"status":     "status",
+		"id":         "id",
+		"name":       "id",
 	}
 	if mapped, ok := sortFieldMap[sortBy]; ok {
 		sortBy = mapped
 	}
-	if sortBy == "" {
+	if sortBy == "" || sortFieldMap[sortBy] == "" {
 		sortBy = "created_at"
+	}
+	sortOrder = strings.ToLower(sortOrder)
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "desc"
 	}
 	orderClause := clause.OrderByColumn{Column: clause.Column{Name: sortBy}, Desc: sortOrder == "desc"}
 

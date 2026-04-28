@@ -12,5 +12,7 @@ func SetupTrialInviteRoutes(r *gin.RouterGroup, trialInviteController *controlle
 	invites.Use(middleware.AuthMiddleware())
 	{
 		invites.POST("", trialInviteController.CreateTrialInvite)
+		invites.GET("/my", trialInviteController.GetMyTrialInvites)
+		invites.PUT("/:id/respond", trialInviteController.RespondTrialInvite)
 	}
 }

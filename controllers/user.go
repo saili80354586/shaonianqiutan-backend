@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -200,24 +201,211 @@ func (ctrl *UserController) GetPlayerProfile(c *gin.Context) {
 
 // GetPublicReports 获取公开报告
 func (ctrl *UserController) GetPublicReports(c *gin.Context) {
-	// userID := c.Param("userId")
-	utils.Success(c, "", gin.H{"reports": []interface{}{}})
+	userIDStr := c.Param("userId")
+	userID, err := strconv.ParseUint(userIDStr, 10, 64)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的用户ID")
+		return
+	}
+
+	var reports []models.Report
+	if err := ctrl.db.
+		Where("user_id = ? AND status = ?", uint(userID), models.ReportStatusCompleted).
+		Order("created_at DESC").
+		Limit(10).
+		Find(&reports).Error; err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取报告失败")
+		return
+	}
+
+	list := make([]gin.H, 0, len(reports))
+	for _, report := range reports {
+		list = append(list, gin.H{
+			"id":              report.ID,
+			"order_id":        report.OrderID,
+			"user_id":         report.UserID,
+			"analyst_id":      report.AnalystID,
+			"player_name":     report.PlayerName,
+			"player_position": report.PlayerPosition,
+			"title":           "视频分析报告",
+			"description":     firstNonEmpty(report.Summary, report.Suggestions),
+			"content":         firstNonEmpty(report.Summary, report.Suggestions),
+			"rating":          report.OverallRating,
+			"overall_rating":  report.OverallRating,
+			"offense_rating":  report.OffenseRating,
+			"defense_rating":  report.DefenseRating,
+			"strengths":       homepageStringList(report.Strengths),
+			"weaknesses":      homepageStringList(report.Weaknesses),
+			"suggestions":     report.Suggestions,
+			"potential":       report.Potential,
+			"status":          report.Status,
+			"created_at":      report.CreatedAt,
+			"updated_at":      report.UpdatedAt,
+		})
+	}
+
+	utils.Success(c, "", gin.H{"reports": list})
 }
 
 // GrowthRecord 成长记录
 type GrowthRecord struct {
-	ID        uint    `json:"id"`
-	Date      string  `json:"date"`
-	Height    float64 `json:"height"`
-	Weight    float64 `json:"weight"`
-	Speed     float64 `json:"speed"`
-	Strength  float64 `json:"strength"`
-	Technique float64 `json:"technique"`
-	Tactics   float64 `json:"tactics"`
-	Note      string  `json:"note"`
+	ID          string   `json:"id"`
+	Date        string   `json:"date"`
+	Type        string   `json:"type"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Content     string   `json:"content"`
+	Location    string   `json:"location"`
+	Opponent    string   `json:"opponent"`
+	Score       string   `json:"score"`
+	VideoURL    string   `json:"videoUrl"`
+	Images      []string `json:"images"`
+	Tags        []string `json:"tags"`
+	Height      float64  `json:"height"`
+	Weight      float64  `json:"weight"`
+	Speed       float64  `json:"speed"`
+	Strength    float64  `json:"strength"`
+	Technique   float64  `json:"technique"`
+	Tactics     float64  `json:"tactics"`
+	Note        string   `json:"note"`
+	MatchName   string   `json:"matchName"`
+	Result      string   `json:"result"`
+	Goals       int      `json:"goals"`
+	Assists     int      `json:"assists"`
+	PlayTime    int      `json:"playTime"`
+	Feeling     string   `json:"feeling"`
+	Photos      []string `json:"photos"`
+	Videos      []string `json:"videos"`
 }
 
-// GetGrowthRecords 获取成长记录（体测数据）
+func normalizeGrowthRecordType(recordType string) models.GrowthRecordType {
+	switch models.GrowthRecordType(recordType) {
+	case models.GrowthRecordTypeMilestone,
+		models.GrowthRecordTypeAchievement,
+		models.GrowthRecordTypeTraining,
+		models.GrowthRecordTypeMatch,
+		models.GrowthRecordTypePhysical:
+		return models.GrowthRecordType(recordType)
+	default:
+		return models.GrowthRecordTypePhysical
+	}
+}
+
+func growthRecordToDTO(r models.GrowthRecord) GrowthRecord {
+	var stats struct {
+		Height    float64  `json:"height"`
+		Weight    float64  `json:"weight"`
+		Speed     float64  `json:"speed"`
+		Strength  float64  `json:"strength"`
+		Technique float64  `json:"technique"`
+		Tactics   float64  `json:"tactics"`
+		Note      string   `json:"note"`
+		Location  string   `json:"location"`
+		Opponent  string   `json:"opponent"`
+		Score     string   `json:"score"`
+		VideoURL  string   `json:"videoUrl"`
+		Images    []string `json:"images"`
+		Tags      []string `json:"tags"`
+		MatchName string   `json:"matchName"`
+		Result    string   `json:"result"`
+		Goals     int      `json:"goals"`
+		Assists   int      `json:"assists"`
+		PlayTime  int      `json:"playTime"`
+		Feeling   string   `json:"feeling"`
+		Photos    []string `json:"photos"`
+		Videos    []string `json:"videos"`
+	}
+	if r.StatsJSON != "" {
+		_ = json.Unmarshal([]byte(r.StatsJSON), &stats)
+	}
+	return GrowthRecord{
+		ID:          strconv.FormatUint(uint64(r.ID), 10),
+		Date:        r.RecordDate.Format("2006-01-02"),
+		Type:        string(r.RecordType),
+		Title:       r.Title,
+		Description: r.Content,
+		Content:     r.Content,
+		Location:    stats.Location,
+		Opponent:    stats.Opponent,
+		Score:       stats.Score,
+		VideoURL:    stats.VideoURL,
+		Images:      stats.Images,
+		Tags:        stats.Tags,
+		Height:      stats.Height,
+		Weight:      stats.Weight,
+		Speed:       stats.Speed,
+		Strength:    stats.Strength,
+		Technique:   stats.Technique,
+		Tactics:     stats.Tactics,
+		Note:        stats.Note,
+		MatchName:   stats.MatchName,
+		Result:      stats.Result,
+		Goals:       stats.Goals,
+		Assists:     stats.Assists,
+		PlayTime:    stats.PlayTime,
+		Feeling:     stats.Feeling,
+		Photos:      stats.Photos,
+		Videos:      stats.Videos,
+	}
+}
+
+func growthRecordModel(userID uint, rec GrowthRecord) (models.GrowthRecord, error) {
+	recordDate, err := time.Parse("2006-01-02", rec.Date)
+	if err != nil || recordDate.IsZero() {
+		recordDate = time.Now()
+	}
+
+	title := rec.Title
+	if title == "" {
+		title = "成长记录"
+	}
+	content := rec.Content
+	if content == "" {
+		content = rec.Description
+	}
+	if rec.Note == "" {
+		rec.Note = content
+	}
+
+	stats := map[string]interface{}{
+		"height":    rec.Height,
+		"weight":    rec.Weight,
+		"speed":     rec.Speed,
+		"strength":  rec.Strength,
+		"technique": rec.Technique,
+		"tactics":   rec.Tactics,
+		"note":      rec.Note,
+		"location":  rec.Location,
+		"opponent":  rec.Opponent,
+		"score":     rec.Score,
+		"videoUrl":  rec.VideoURL,
+		"images":    rec.Images,
+		"tags":      rec.Tags,
+		"matchName": rec.MatchName,
+		"result":    rec.Result,
+		"goals":     rec.Goals,
+		"assists":   rec.Assists,
+		"playTime":  rec.PlayTime,
+		"feeling":   rec.Feeling,
+		"photos":    rec.Photos,
+		"videos":    rec.Videos,
+	}
+	statsJSON, err := json.Marshal(stats)
+	if err != nil {
+		return models.GrowthRecord{}, err
+	}
+
+	return models.GrowthRecord{
+		UserID:     userID,
+		RecordDate: recordDate,
+		RecordType: normalizeGrowthRecordType(rec.Type),
+		Title:      title,
+		Content:    content,
+		StatsJSON:  string(statsJSON),
+	}, nil
+}
+
+// GetGrowthRecords 获取成长记录
 func (ctrl *UserController) GetGrowthRecords(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
@@ -226,7 +414,7 @@ func (ctrl *UserController) GetGrowthRecords(c *gin.Context) {
 	}
 
 	var dbRecords []models.GrowthRecord
-	if err := ctrl.db.Where("user_id = ? AND record_type = ?", userID, models.GrowthRecordTypePhysical).
+	if err := ctrl.db.Where("user_id = ?", userID).
 		Order("record_date DESC").Find(&dbRecords).Error; err != nil {
 		utils.ServerError(c, "查询失败")
 		return
@@ -234,35 +422,13 @@ func (ctrl *UserController) GetGrowthRecords(c *gin.Context) {
 
 	records := make([]GrowthRecord, 0, len(dbRecords))
 	for _, r := range dbRecords {
-		var stats struct {
-			Height    float64 `json:"height"`
-			Weight    float64 `json:"weight"`
-			Speed     float64 `json:"speed"`
-			Strength  float64 `json:"strength"`
-			Technique float64 `json:"technique"`
-			Tactics   float64 `json:"tactics"`
-			Note      string  `json:"note"`
-		}
-		if r.StatsJSON != "" {
-			_ = json.Unmarshal([]byte(r.StatsJSON), &stats)
-		}
-		records = append(records, GrowthRecord{
-			ID:        r.ID,
-			Date:      r.RecordDate.Format("2006-01-02"),
-			Height:    stats.Height,
-			Weight:    stats.Weight,
-			Speed:     stats.Speed,
-			Strength:  stats.Strength,
-			Technique: stats.Technique,
-			Tactics:   stats.Tactics,
-			Note:      stats.Note,
-		})
+		records = append(records, growthRecordToDTO(r))
 	}
 
 	utils.Success(c, "", gin.H{"records": records})
 }
 
-// SaveGrowthRecords 保存成长记录（体测数据）
+// SaveGrowthRecords 批量保存成长记录
 func (ctrl *UserController) SaveGrowthRecords(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
@@ -270,46 +436,126 @@ func (ctrl *UserController) SaveGrowthRecords(c *gin.Context) {
 		return
 	}
 
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "读取请求失败")
+		return
+	}
+
 	var req struct {
 		Records []GrowthRecord `json:"records"`
 	}
+	if err := json.Unmarshal(body, &req); err == nil && req.Records != nil {
+		for _, rec := range req.Records {
+			gr, err := growthRecordModel(userID, rec)
+			if err != nil {
+				utils.Error(c, http.StatusBadRequest, "成长记录格式错误")
+				return
+			}
+			if err := ctrl.db.Create(&gr).Error; err != nil {
+				utils.ServerError(c, "保存失败")
+				return
+			}
+		}
+
+		utils.Success(c, "成长记录保存成功", nil)
+		return
+	}
+
+	var single GrowthRecord
+	if err := json.Unmarshal(body, &single); err != nil {
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	gr, err := growthRecordModel(userID, single)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "成长记录格式错误")
+		return
+	}
+	if gr.Title == "" {
+		utils.Error(c, http.StatusBadRequest, "标题不能为空")
+		return
+	}
+	if err := ctrl.db.Create(&gr).Error; err != nil {
+		utils.ServerError(c, "保存失败")
+		return
+	}
+	utils.Success(c, "成长记录保存成功", growthRecordToDTO(gr))
+}
+
+func (ctrl *UserController) UpdateGrowthRecord(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		utils.Error(c, http.StatusUnauthorized, "未认证")
+		return
+	}
+
+	recordID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的成长记录ID")
+		return
+	}
+
+	var req GrowthRecord
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	for _, rec := range req.Records {
-		stats := map[string]interface{}{
-			"height":    rec.Height,
-			"weight":    rec.Weight,
-			"speed":     rec.Speed,
-			"strength":  rec.Strength,
-			"technique": rec.Technique,
-			"tactics":   rec.Tactics,
-			"note":      rec.Note,
-		}
-		statsJSON, _ := json.Marshal(stats)
-
-		recordDate, _ := time.Parse("2006-01-02", rec.Date)
-		if recordDate.IsZero() {
-			recordDate = time.Now()
-		}
-
-		gr := models.GrowthRecord{
-			UserID:     userID,
-			RecordDate: recordDate,
-			RecordType: models.GrowthRecordTypePhysical,
-			Title:      "体测记录",
-			Content:    rec.Note,
-			StatsJSON:  string(statsJSON),
-		}
-		if err := ctrl.db.Create(&gr).Error; err != nil {
-			utils.ServerError(c, "保存失败")
-			return
-		}
+	var existing models.GrowthRecord
+	if err := ctrl.db.Where("id = ? AND user_id = ?", recordID, userID).First(&existing).Error; err != nil {
+		utils.Error(c, http.StatusNotFound, "成长记录不存在")
+		return
 	}
 
-	utils.Success(c, "成长记录保存成功", nil)
+	updated, err := growthRecordModel(userID, req)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "成长记录格式错误")
+		return
+	}
+
+	if err := ctrl.db.Model(&existing).Updates(map[string]interface{}{
+		"record_date": updated.RecordDate,
+		"record_type": updated.RecordType,
+		"title":       updated.Title,
+		"content":     updated.Content,
+		"stats_json":  updated.StatsJSON,
+	}).Error; err != nil {
+		utils.ServerError(c, "更新失败")
+		return
+	}
+
+	if err := ctrl.db.First(&existing, existing.ID).Error; err != nil {
+		utils.ServerError(c, "查询失败")
+		return
+	}
+	utils.Success(c, "成长记录已更新", growthRecordToDTO(existing))
+}
+
+func (ctrl *UserController) DeleteGrowthRecord(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		utils.Error(c, http.StatusUnauthorized, "未认证")
+		return
+	}
+
+	recordID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的成长记录ID")
+		return
+	}
+
+	result := ctrl.db.Where("id = ? AND user_id = ?", recordID, userID).Delete(&models.GrowthRecord{})
+	if result.Error != nil {
+		utils.ServerError(c, "删除失败")
+		return
+	}
+	if result.RowsAffected == 0 {
+		utils.Error(c, http.StatusNotFound, "成长记录不存在")
+		return
+	}
+
+	utils.Success(c, "成长记录已删除", nil)
 }
 
 // VideoAnalysisResult 视频分析结果
@@ -568,6 +814,30 @@ func parsePrivacySettings(raw string) PrivacySettings {
 	privacy := defaultPrivacySettings()
 	if raw != "" {
 		_ = json.Unmarshal([]byte(raw), &privacy)
+		var compat struct {
+			ProfileVisible *bool `json:"profileVisible"`
+			PhoneVisible   *bool `json:"phoneVisible"`
+			AllowSearch    *bool `json:"allowSearch"`
+			Searchable     *bool `json:"searchable"`
+			ShowRealName   *bool `json:"showRealName"`
+		}
+		if err := json.Unmarshal([]byte(raw), &compat); err == nil {
+			if compat.ProfileVisible != nil {
+				privacy.ProfileVisible = *compat.ProfileVisible
+			}
+			if compat.PhoneVisible != nil {
+				privacy.PhoneVisible = *compat.PhoneVisible
+			}
+			if compat.AllowSearch != nil {
+				privacy.AllowSearch = *compat.AllowSearch
+			}
+			if compat.Searchable != nil {
+				privacy.AllowSearch = *compat.Searchable
+			}
+			if compat.ShowRealName != nil {
+				privacy.ShowRealName = *compat.ShowRealName
+			}
+		}
 	}
 	return privacy
 }
@@ -656,7 +926,15 @@ type LoginDevice struct {
 	IsCurrent  bool   `json:"is_current"`
 }
 
-// GetLoginDevices 获取登录设备列表（模拟数据）
+func loginLogDeviceType(log models.LoginLog) string {
+	osName := log.OS
+	if osName == "iOS" || osName == "Android" {
+		return "mobile"
+	}
+	return "desktop"
+}
+
+// GetLoginDevices 获取登录设备列表
 func (ctrl *UserController) GetLoginDevices(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
@@ -664,30 +942,46 @@ func (ctrl *UserController) GetLoginDevices(c *gin.Context) {
 		return
 	}
 
-	// 返回模拟设备数据（实际应从 login_logs 表查询）
-	devices := []LoginDevice{
-		{
-			ID:         1,
+	var logs []models.LoginLog
+	if err := ctrl.db.Where("user_id = ? AND status = ?", userID, "success").
+		Order("created_at DESC").
+		Limit(20).
+		Find(&logs).Error; err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取登录设备失败")
+		return
+	}
+
+	devices := make([]LoginDevice, 0, len(logs))
+	for i, logItem := range logs {
+		deviceName := logItem.Device
+		if deviceName == "" {
+			deviceName = "未知设备"
+		}
+		devices = append(devices, LoginDevice{
+			ID:         logItem.ID,
+			DeviceName: deviceName,
+			DeviceType: loginLogDeviceType(logItem),
+			Browser:    logItem.Browser,
+			OS:         logItem.OS,
+			IP:         logItem.IP,
+			Location:   logItem.Location,
+			LoginAt:    logItem.CreatedAt.Format("2006-01-02 15:04"),
+			IsCurrent:  i == 0,
+		})
+	}
+
+	if len(devices) == 0 {
+		devices = append(devices, LoginDevice{
+			ID:         0,
 			DeviceName: "当前设备",
 			DeviceType: "desktop",
-			Browser:    "Chrome",
-			OS:         "macOS",
-			IP:         "192.168.1.xxx",
-			Location:   "本地网络",
+			Browser:    "Unknown",
+			OS:         "Unknown",
+			IP:         c.ClientIP(),
+			Location:   "当前请求",
 			LoginAt:    time.Now().Format("2006-01-02 15:04"),
 			IsCurrent:  true,
-		},
-		{
-			ID:         2,
-			DeviceName: "iPhone 15 Pro",
-			DeviceType: "mobile",
-			Browser:    "Safari",
-			OS:         "iOS 17",
-			IP:         "117.136.xxx.xxx",
-			Location:   "北京市",
-			LoginAt:    time.Now().Add(-24 * time.Hour).Format("2006-01-02 15:04"),
-			IsCurrent:  false,
-		},
+		})
 	}
 
 	utils.Success(c, "", gin.H{"devices": devices})
@@ -701,9 +995,29 @@ func (ctrl *UserController) LogoutDevice(c *gin.Context) {
 		return
 	}
 
-	deviceID := c.Param("deviceId")
-	// 实际应删除对应设备的登录记录/token
-	_ = deviceID
+	deviceID, err := strconv.ParseUint(c.Param("deviceId"), 10, 64)
+	if err != nil || deviceID == 0 {
+		utils.Error(c, http.StatusBadRequest, "无效的设备ID")
+		return
+	}
 
-	utils.Success(c, "设备已登出", nil)
+	var latest models.LoginLog
+	if err := ctrl.db.Where("user_id = ? AND status = ?", userID, "success").
+		Order("created_at DESC").
+		First(&latest).Error; err == nil && latest.ID == uint(deviceID) {
+		utils.Error(c, http.StatusBadRequest, "当前设备不能在此登出")
+		return
+	}
+
+	result := ctrl.db.Where("id = ? AND user_id = ?", uint(deviceID), userID).Delete(&models.LoginLog{})
+	if result.Error != nil {
+		utils.Error(c, http.StatusInternalServerError, "移除设备记录失败")
+		return
+	}
+	if result.RowsAffected == 0 {
+		utils.Error(c, http.StatusNotFound, "设备记录不存在")
+		return
+	}
+
+	utils.Success(c, "设备记录已移除", nil)
 }

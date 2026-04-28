@@ -82,3 +82,17 @@ func ParsePaginationWithSize(c *gin.Context, defaultSize int) PaginationParams {
 		Offset:   (page - 1) * pageSize,
 	}
 }
+
+func ParseIntQuery(c *gin.Context, key string, defaultValue, minValue, maxValue int) int {
+	value, err := strconv.Atoi(c.DefaultQuery(key, strconv.Itoa(defaultValue)))
+	if err != nil {
+		value = defaultValue
+	}
+	if value < minValue {
+		value = minValue
+	}
+	if maxValue > 0 && value > maxValue {
+		value = maxValue
+	}
+	return value
+}

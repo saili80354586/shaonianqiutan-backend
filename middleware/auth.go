@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -34,8 +35,41 @@ func GenerateToken(userID uint, phone string) (string, error) {
 	return token.SignedString([]byte(config.GetJWTSecret()))
 }
 
-// AuthMiddleware JWT认证中间件（支持 header Authorization 或 query token 参数）
+// ParseTokenAllowExpired 校验签名并解析 Token，但不校验过期时间；仅用于刷新令牌。
+func ParseTokenAllowExpired(tokenStr string) (*Claims, error) {
+	claims := &Claims{}
+	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
+	token, err := parser.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+		return []byte(config.GetJWTSecret()), nil
+	})
+	if err != nil || token == nil || !token.Valid {
+		return nil, errors.New("认证令牌无效")
+	}
+	return claims, nil
+}
+
+func ParseToken(tokenStr string) (*Claims, error) {
+	claims := &Claims{}
+	token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+		return []byte(config.GetJWTSecret()), nil
+	})
+	if err != nil || token == nil || !token.Valid {
+		return nil, errors.New("认证令牌无效或已过期")
+	}
+	return claims, nil
+}
+
+// AuthMiddleware JWT认证中间件（仅支持 header Authorization）
 func AuthMiddleware() gin.HandlerFunc {
+	return authMiddleware(false)
+}
+
+// QueryTokenAuthMiddleware JWT认证中间件（兼容 WebSocket query token）
+func QueryTokenAuthMiddleware() gin.HandlerFunc {
+	return authMiddleware(true)
+}
+
+func authMiddleware(allowQueryToken bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var tokenStr string
 
@@ -48,8 +82,7 @@ func AuthMiddleware() gin.HandlerFunc {
 			}
 		}
 
-		// fallback: 从 query token 参数获取（用于 window.open 打开的下载链接）
-		if tokenStr == "" {
+		if allowQueryToken && tokenStr == "" {
 			tokenStr = c.Query("token")
 		}
 
@@ -59,13 +92,22 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		claims := &Claims{}
-		token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
-			return []byte(config.GetJWTSecret()), nil
-		})
-
-		if err != nil || !token.Valid {
+		claims, err := ParseToken(tokenStr)
+		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "认证令牌无效或已过期"})
+			c.Abort()
+			return
+		}
+
+		userRepo := models.NewUserRepository(config.GetDB())
+		user, err := userRepo.FindByID(claims.UserID)
+		if err != nil || user == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "用户不存在或已被删除"})
+			c.Abort()
+			return
+		}
+		if user.Status != models.StatusActive {
+			c.JSON(http.StatusForbidden, gin.H{"error": "账号未激活或已被禁用"})
 			c.Abort()
 			return
 		}
@@ -73,6 +115,29 @@ func AuthMiddleware() gin.HandlerFunc {
 		// 将用户信息存入上下文
 		c.Set("userId", claims.UserID)
 		c.Set("phone", claims.Phone)
+		c.Set("user", user)
+		c.Next()
+	}
+}
+
+// AdminRoleMiddleware 管理员角色权限中间件
+func AdminRoleMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userValue, exists := c.Get("user")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "未认证"})
+			c.Abort()
+			return
+		}
+
+		user, ok := userValue.(*models.User)
+		if !ok || user == nil || user.Status != models.StatusActive || user.Role != models.RoleAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "您没有管理员权限"})
+			c.Abort()
+			return
+		}
+
+		c.Set("adminId", user.ID)
 		c.Next()
 	}
 }
@@ -90,7 +155,7 @@ func AnalystRoleMiddleware() gin.HandlerFunc {
 		// 查询数据库验证是否为分析师
 		userRepo := models.NewUserRepository(config.GetDB())
 		analyst, err := userRepo.FindAnalystByUserID(userID.(uint))
-		if err != nil || analyst == nil {
+		if err != nil || analyst == nil || analyst.Status != models.AnalystStatusActive {
 			c.JSON(http.StatusForbidden, gin.H{"error": "您没有分析师权限"})
 			c.Abort()
 			return

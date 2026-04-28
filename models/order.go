@@ -66,7 +66,7 @@ type Order struct {
 	Remark string `json:"remark" gorm:"size:500"`
 
 	// ===== 新增：订单业务字段 =====
-	OrderType      string     `json:"order_type" gorm:"size:20;default:'text'"` // text | video
+	OrderType      string     `json:"order_type" gorm:"size:20;default:'basic'"` // basic | pro
 	PlayerName     string     `json:"player_name" gorm:"size:50"`
 	PlayerAge      int        `json:"player_age"`
 	PlayerPosition string     `json:"player_position" gorm:"size:50"`
@@ -74,16 +74,16 @@ type Order struct {
 	JerseyNumber   string     `json:"jersey_number" gorm:"size:10"`
 	MatchName      string     `json:"match_name" gorm:"size:100"`
 	Opponent       string     `json:"opponent" gorm:"size:100"`
-	VideoDuration  int        `json:"video_duration"` // 秒
-	Deadline       *time.Time `json:"deadline"`       // 分析师截止提交时间
-	AssignedAt     *time.Time `json:"assigned_at"`    // 管理员派发时间
-	AcceptedAt     *time.Time `json:"accepted_at"`    // 分析师接单时间
+	VideoDuration  int        `json:"video_duration"`                // 秒
+	Deadline       *time.Time `json:"deadline"`                      // 分析师截止提交时间
+	AssignedAt     *time.Time `json:"assigned_at"`                   // 管理员派发时间
+	AcceptedAt     *time.Time `json:"accepted_at"`                   // 分析师接单时间
 	CancelReason   string     `json:"cancel_reason" gorm:"size:500"` // 拒绝/取消原因
 
 	// ===== 结算相关字段 =====
-	SettledAt    *time.Time `json:"settled_at"`    // 结算时间
-	SettledBy    uint       `json:"settled_by"`    // 结算人ID
-	SettledAmount float64   `json:"settled_amount" gorm:"type:decimal(10,2);default:0"` // 实际结算金额
+	SettledAt     *time.Time `json:"settled_at"`                                         // 结算时间
+	SettledBy     uint       `json:"settled_by"`                                         // 结算人ID
+	SettledAmount float64    `json:"settled_amount" gorm:"type:decimal(10,2);default:0"` // 实际结算金额
 
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`

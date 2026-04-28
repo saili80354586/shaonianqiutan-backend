@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,12 +25,100 @@ type AuthService struct {
 	db         *gorm.DB
 }
 
+var ErrAccountNotActive = errors.New("账号未激活或已被禁用")
+
 func NewAuthService(userRepo *models.UserRepository, smsService *SmsService, db *gorm.DB) *AuthService {
 	return &AuthService{
 		userRepo:   userRepo,
 		smsService: smsService,
 		db:         db,
 	}
+}
+
+func (s *AuthService) getActiveUserRoles(user *models.User) ([]models.UserRole, error) {
+	if user == nil || user.Status != models.StatusActive {
+		return nil, nil
+	}
+
+	roles := make([]models.UserRole, 0, 4)
+	seen := make(map[models.UserRole]bool)
+	addRole := func(role models.UserRole) {
+		if role == "" || seen[role] {
+			return
+		}
+		seen[role] = true
+		roles = append(roles, role)
+	}
+
+	addRole(user.Role)
+
+	var count int64
+	if err := s.db.Model(&models.Analyst{}).Where("user_id = ? AND status = ?", user.ID, models.AnalystStatusActive).Count(&count).Error; err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		addRole(models.RoleAnalyst)
+	}
+
+	count = 0
+	if err := s.db.Model(&models.Scout{}).Where("user_id = ?", user.ID).Count(&count).Error; err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		addRole(models.RoleScout)
+	}
+
+	count = 0
+	if err := s.db.Model(&models.Club{}).Where("user_id = ?", user.ID).Count(&count).Error; err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		addRole(models.RoleClub)
+	}
+
+	count = 0
+	if err := s.db.Model(&models.ClubCoach{}).Where("user_id = ? AND status = ?", user.ID, models.ClubCoachStatusActive).Count(&count).Error; err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		addRole(models.RoleCoach)
+	}
+
+	count = 0
+	if err := s.db.Model(&models.TeamCoach{}).Where("user_id = ? AND status = ?", user.ID, "active").Count(&count).Error; err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		addRole(models.RoleCoach)
+	}
+
+	return roles, nil
+}
+
+func hasRole(roles []models.UserRole, role models.UserRole) bool {
+	for _, activeRole := range roles {
+		if activeRole == role {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *AuthService) normalizeCurrentRole(user *models.User, requested string) (models.UserRole, error) {
+	role := models.UserRole(strings.TrimSpace(requested))
+	if role == "" {
+		role = user.Role
+	}
+
+	roles, err := s.getActiveUserRoles(user)
+	if err != nil {
+		return "", err
+	}
+	if !hasRole(roles, role) {
+		return "", fmt.Errorf("无权切换到该角色")
+	}
+
+	return role, nil
 }
 
 // RegisterRequest 注册请求
@@ -59,21 +148,21 @@ type RegisterRequest struct {
 	JerseyColor    string  `json:"jersey_color"`
 	JerseyNumber   int     `json:"jersey_number"`
 	// 家庭信息
-	FatherHeight    float64 `json:"father_height"`
-	FatherPhone     string  `json:"father_phone"`
-	FatherOccupation string `json:"father_occupation"`
-	FatherEdu       string  `json:"father_edu"`
-	FatherJob       string  `json:"father_job"`
-	FatherAthlete   string  `json:"father_athlete"`
-	MotherHeight    float64 `json:"mother_height"`
-	MotherPhone     string  `json:"mother_phone"`
-	MotherOccupation string `json:"mother_occupation"`
-	MotherEdu       string  `json:"mother_edu"`
-	MotherJob       string  `json:"mother_job"`
-	MotherAthlete   string  `json:"mother_athlete"`
+	FatherHeight     float64 `json:"father_height"`
+	FatherPhone      string  `json:"father_phone"`
+	FatherOccupation string  `json:"father_occupation"`
+	FatherEdu        string  `json:"father_edu"`
+	FatherJob        string  `json:"father_job"`
+	FatherAthlete    string  `json:"father_athlete"`
+	MotherHeight     float64 `json:"mother_height"`
+	MotherPhone      string  `json:"mother_phone"`
+	MotherOccupation string  `json:"mother_occupation"`
+	MotherEdu        string  `json:"mother_edu"`
+	MotherJob        string  `json:"mother_job"`
+	MotherAthlete    string  `json:"mother_athlete"`
 	// 球员扩展字段
 	CurrentTeam   string `json:"current_team"`
-	PlayingStyle  string `json:"playing_style"`  // JSON: ["tech","speed"]
+	PlayingStyle  string `json:"playing_style"` // JSON: ["tech","speed"]
 	Wechat        string `json:"wechat"`
 	School        string `json:"school"`
 	TechnicalTags string `json:"technical_tags"` // JSON: ["盘带","射门"]
@@ -84,13 +173,13 @@ type RegisterRequest struct {
 	// 注册时填写的体测数据（存到 users 表字段）
 	Sprint30m        float64 `json:"sprint_30m"`
 	StandingLongJump float64 `json:"standing_long_jump"`
-	Flexibility     float64 `json:"flexibility"`      // 坐位体前屈(cm)
-	PullUps         int     `json:"pull_ups"`         // 引体向上(个)
-	PushUp          int     `json:"push_up"`          // 俯卧撑(个)
-	SitUps          int     `json:"sit_ups"`          // 仰卧起坐(个/分钟)
+	Flexibility      float64 `json:"flexibility"`        // 坐位体前屈(cm)
+	PullUps          int     `json:"pull_ups"`           // 引体向上(个)
+	PushUp           int     `json:"push_up"`            // 俯卧撑(个)
+	SitUps           int     `json:"sit_ups"`            // 仰卧起坐(个/分钟)
 	FiveMeterShuttle float64 `json:"five_meter_shuttle"` // 5×25米折返跑(秒)
-	Coordination     float64 `json:"coordination"`      // 协调性测试(秒)
-	SitAndReach     float64 `json:"sit_and_reach"`     // 坐位体前屈(cm)
+	Coordination     float64 `json:"coordination"`       // 协调性测试(秒)
+	SitAndReach      float64 `json:"sit_and_reach"`      // 坐位体前屈(cm)
 	// 俱乐部专属字段
 	ClubName         string `json:"club_name"`
 	ClubType         string `json:"club_type"`
@@ -102,11 +191,11 @@ type RegisterRequest struct {
 	ContactPosition  string `json:"contact_position"`
 	ClubContactPhone string `json:"club_contact_phone"`
 	// 教练专属字段
-	CoachType        string `json:"coach_type"`
-	LicenseLevel     string `json:"license_level"`
-	LicenseNumber    string `json:"license_number"`
-	CoachExperience  string `json:"coach_experience"`
-	CoachSpecialty   string `json:"coach_specialty"`
+	CoachType       string `json:"coach_type"`
+	LicenseLevel    string `json:"license_level"`
+	LicenseNumber   string `json:"license_number"`
+	CoachExperience string `json:"coach_experience"`
+	CoachSpecialty  string `json:"coach_specialty"`
 	// 分析师专属字段
 	Profession   string `json:"profession"`
 	Experience   string `json:"experience"`
@@ -115,10 +204,10 @@ type RegisterRequest struct {
 	CaseDetail   string `json:"case_detail"`
 	Certificates string `json:"certificates"`
 	// 球探专属字段
-	ScoutingExperience string `json:"scouting_experience"`
-	ScoutingSpecialty  string `json:"scouting_specialty"`
-	PreferredAgeGroups string `json:"preferred_age_groups"`
-	ScoutingRegions    string `json:"scouting_regions"`
+	ScoutingExperience  string `json:"scouting_experience"`
+	ScoutingSpecialty   string `json:"scouting_specialty"`
+	PreferredAgeGroups  string `json:"preferred_age_groups"`
+	ScoutingRegions     string `json:"scouting_regions"`
 	CurrentOrganization string `json:"current_organization"`
 	// 俱乐部专属字段（注册时填写的规模信息）
 	TeamCount    int    `json:"team_count"`
@@ -178,13 +267,13 @@ type UpdateUserRequest struct {
 	MotherAthlete  *bool    `json:"mother_athlete"`
 	CurrentRole    *string  `json:"current_role"`
 	// 球员扩展字段
-	CurrentTeam    *string  `json:"current_team"`
-	PlayingStyle   *string  `json:"playing_style"`
-	Wechat         *string  `json:"wechat"`
-	School         *string  `json:"school"`
-	TechnicalTags  *string  `json:"technical_tags"`
-	MentalTags     *string  `json:"mental_tags"`
-	Experiences    *string  `json:"experiences"`
+	CurrentTeam   *string `json:"current_team"`
+	PlayingStyle  *string `json:"playing_style"`
+	Wechat        *string `json:"wechat"`
+	School        *string `json:"school"`
+	TechnicalTags *string `json:"technical_tags"`
+	MentalTags    *string `json:"mental_tags"`
+	Experiences   *string `json:"experiences"`
 }
 
 // LoginResponse 登录响应
@@ -322,12 +411,12 @@ func (s *AuthService) Register(req *RegisterRequest) (*LoginResponse, error) {
 		CoachCount:   req.CoachCount,
 		Achievements: req.Achievements,
 		// 新增球员扩展字段
-		DominantFoot:  req.DominantFoot,
-		VideoUrl:      req.VideoUrl,
+		DominantFoot: req.DominantFoot,
+		VideoUrl:     req.VideoUrl,
 		// 新增体测字段
-		Flexibility:     req.Flexibility,
-		PullUps:         req.PullUps,
-		SitUps:          req.SitUps,
+		Flexibility:      req.Flexibility,
+		PullUps:          req.PullUps,
+		SitUps:           req.SitUps,
 		FiveMeterShuttle: req.FiveMeterShuttle,
 		Coordination:     req.Coordination,
 		// 新增家庭信息字段
@@ -385,7 +474,6 @@ func (s *AuthService) Register(req *RegisterRequest) (*LoginResponse, error) {
 		User:    user,
 	}, nil
 }
-
 
 // processInviteOnRegister 注册时自动处理邀请码入队/入俱乐部
 func (s *AuthService) processInviteOnRegister(user *models.User, inviteCode string) error {
@@ -557,19 +645,26 @@ func (s *AuthService) GetUserByID(id uint) (*models.User, error) {
 		return user, err
 	}
 
-	// 默认 current_role 为主 role（确保有值）
-	if user.CurrentRole == "" {
-		user.CurrentRole = user.Role
+	activeRoles, err := s.getActiveUserRoles(user)
+	if err != nil {
+		return nil, err
 	}
 
-	// 构建多角色信息（前端展示用）
-	// 主角色始终加入 Roles
-	user.Roles = []models.UserRoleInfo{
-		{Type: user.Role, Status: "active"},
+	if len(activeRoles) == 0 {
+		user.CurrentRole = user.Role
+		user.Roles = []models.UserRoleInfo{
+			{Type: user.Role, Status: string(user.Status)},
+		}
+		return user, nil
 	}
-	// current_role 若与主角色不同，也加入 Roles
-	if user.CurrentRole != "" && user.CurrentRole != user.Role {
-		user.Roles = append(user.Roles, models.UserRoleInfo{Type: user.CurrentRole, Status: "active"})
+
+	if user.CurrentRole == "" || !hasRole(activeRoles, user.CurrentRole) {
+		user.CurrentRole = activeRoles[0]
+	}
+
+	user.Roles = make([]models.UserRoleInfo, 0, len(activeRoles))
+	for _, role := range activeRoles {
+		user.Roles = append(user.Roles, models.UserRoleInfo{Type: role, Status: "active"})
 	}
 
 	return user, nil
@@ -577,6 +672,14 @@ func (s *AuthService) GetUserByID(id uint) (*models.User, error) {
 
 // UpdateUser 更新用户信息
 func (s *AuthService) UpdateUser(id uint, req *UpdateUserRequest) (*models.User, error) {
+	existingUser, err := s.userRepo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if existingUser == nil {
+		return nil, fmt.Errorf("用户不存在")
+	}
+
 	updates := make(map[string]interface{})
 
 	// 逐个添加非nil字段
@@ -671,14 +774,18 @@ func (s *AuthService) UpdateUser(id uint, req *UpdateUserRequest) (*models.User,
 		updates["mother_athlete"] = *req.MotherAthlete
 	}
 	if req.CurrentRole != nil {
-		updates["current_role"] = *req.CurrentRole
+		currentRole, err := s.normalizeCurrentRole(existingUser, *req.CurrentRole)
+		if err != nil {
+			return nil, err
+		}
+		updates["current_role"] = currentRole
 	}
 
 	if len(updates) == 0 {
 		return s.userRepo.FindByID(id)
 	}
 
-	err := s.userRepo.Update(id, updates)
+	err = s.userRepo.Update(id, updates)
 	if err != nil {
 		return nil, err
 	}
@@ -748,6 +855,7 @@ func (s *AuthService) RefreshToken(userID uint) (*RefreshTokenResponse, error) {
 		User:  user,
 	}, nil
 }
+
 // Login 用户登录
 func (s *AuthService) Login(req *LoginRequest) (*LoginResponse, error) {
 	user, err := s.userRepo.FindByPhone(req.Phone)
@@ -761,6 +869,10 @@ func (s *AuthService) Login(req *LoginRequest) (*LoginResponse, error) {
 	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password))
 	if err != nil {
 		return nil, nil
+	}
+
+	if user.Status != models.StatusActive {
+		return nil, ErrAccountNotActive
 	}
 
 	token, err := middleware.GenerateToken(user.ID, user.Phone)
@@ -780,5 +892,3 @@ func (s *AuthService) Login(req *LoginRequest) (*LoginResponse, error) {
 		User:    user,
 	}, nil
 }
-
-

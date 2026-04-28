@@ -17,6 +17,7 @@ func SetupAdminRoutes(r *gin.RouterGroup, adminController *controllers.AdminCont
 	// 需要认证的路由
 	authAdmin := r.Group("/admin")
 	authAdmin.Use(middleware.AuthMiddleware())
+	authAdmin.Use(middleware.AdminRoleMiddleware())
 	{
 		// 数据看板 & 运营洞察
 		authAdmin.GET("/statistics", adminController.GetStatistics)
@@ -26,6 +27,8 @@ func SetupAdminRoutes(r *gin.RouterGroup, adminController *controllers.AdminCont
 		authAdmin.GET("/dashboard/retention", adminController.GetRetentionData)
 		authAdmin.GET("/dashboard/top", adminController.GetTopData)
 		authAdmin.GET("/dashboard/revenue", adminController.GetRevenueTrend)
+		authAdmin.GET("/settings", adminController.GetSystemSettings)
+		authAdmin.PUT("/settings", adminController.UpdateSystemSettings)
 
 		// 用户管理
 		authAdmin.GET("/users", adminController.GetUserList)
@@ -35,6 +38,8 @@ func SetupAdminRoutes(r *gin.RouterGroup, adminController *controllers.AdminCont
 		// 订单管理
 		authAdmin.GET("/orders", adminController.GetAllOrders)
 		authAdmin.GET("/orders/stats", adminController.GetOrderStats)
+		authAdmin.GET("/orders/assignments", adminController.GetAssignmentRecords)
+		authAdmin.GET("/orders/:id/status-history", adminController.GetOrderStatusHistory)
 		authAdmin.POST("/orders/:id/assign", adminController.AssignOrder)
 		authAdmin.DELETE("/orders/:id", adminController.CancelOrder)
 
@@ -52,9 +57,9 @@ func SetupAdminRoutes(r *gin.RouterGroup, adminController *controllers.AdminCont
 		// 报告管理
 		authAdmin.GET("/reports/pending", adminController.GetPendingReports)
 		authAdmin.POST("/reports/:id/review", adminController.ReviewReport)
-		authAdmin.GET("/reports/:id/download", adminController.DownloadReportDoc)   // 下载报告 MD 文档
-		authAdmin.POST("/reports/:id/upload-report", adminController.UploadAIReport)   // 上传 AI Word 报告
-		authAdmin.POST("/reports/:id/upload-video", adminController.UploadAIVideo)    // 上传 AI 视频分析
+		authAdmin.GET("/reports/:id/download", adminController.DownloadReportDoc)    // 下载报告 MD 文档
+		authAdmin.POST("/reports/:id/upload-report", adminController.UploadAIReport) // 上传 AI Word 报告
+		authAdmin.POST("/reports/:id/upload-video", adminController.UploadAIVideo)   // 上传 AI 视频分析
 
 		// 视频分析 MD 文档下载（来自 video_analyses）
 		authAdmin.GET("/video-analysis/:id/download", adminController.DownloadVideoAnalysisDoc) // 下载视频分析 MD 文档

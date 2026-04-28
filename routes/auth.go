@@ -15,13 +15,13 @@ func SetupAuthRoutes(r *gin.RouterGroup, authController *controllers.AuthControl
 		auth.POST("/register", authController.Register)
 		auth.POST("/login", authController.Login)
 		auth.POST("/reset-password", authController.ResetPassword)
+		auth.POST("/refresh-token", authController.RefreshToken)
 
 		// 需要认证的路由
 		auth.Use(middleware.AuthMiddleware())
 		{
 			auth.GET("/me", authController.GetMe)
 			auth.PUT("/me", authController.UpdateMe)
-			auth.POST("/refresh-token", authController.RefreshToken)
 		}
 	}
 }

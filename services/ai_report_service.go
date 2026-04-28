@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -21,9 +22,8 @@ type AIConfig struct {
 	Model   string
 }
 
-// DefaultAIConfig 默认配置 - 智谱AI (ZhipuAI)
+// DefaultAIConfig 默认配置 - 智谱AI (ZhipuAI)，敏感密钥必须来自环境变量
 var DefaultAIConfig = AIConfig{
-	APIKey:  "3bf2c517511a4a9eb47fef1c90ab9fbc.SHVoHHdXqDOuXsaM",
 	BaseURL: "https://open.bigmodel.cn/api/paas/v4/",
 	Model:   "glm-4-flash",
 }
@@ -40,9 +40,9 @@ type ChatRequest struct {
 
 // ChatMessage 聊天消息
 type ChatMessage struct {
-	Role              string `json:"role"`
-	Content           string `json:"content"`
-	ReasoningContent  string `json:"reasoning_content,omitempty"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 // ChatResponse 聊天补全响应（OpenAI兼容格式）
@@ -74,13 +74,19 @@ type AIService struct {
 // NewAIService 创建AI服务
 func NewAIService(config AIConfig) *AIService {
 	if config.APIKey == "" {
-		config.APIKey = DefaultAIConfig.APIKey
+		config.APIKey = os.Getenv("AI_API_KEY")
 	}
 	if config.BaseURL == "" {
-		config.BaseURL = DefaultAIConfig.BaseURL
+		config.BaseURL = os.Getenv("AI_BASE_URL")
+		if config.BaseURL == "" {
+			config.BaseURL = DefaultAIConfig.BaseURL
+		}
 	}
 	if config.Model == "" {
-		config.Model = DefaultAIConfig.Model
+		config.Model = os.Getenv("AI_MODEL")
+		if config.Model == "" {
+			config.Model = DefaultAIConfig.Model
+		}
 	}
 	return &AIService{
 		config: config,
@@ -107,6 +113,10 @@ func (s *AIService) GenerateReport(prompt string) (string, error) {
 
 // chat 调用 LLM API（OpenAI兼容格式）
 func (s *AIService) chat(messages []ChatMessage) (string, error) {
+	if s.config.APIKey == "" {
+		return "", fmt.Errorf("AI_API_KEY 未配置")
+	}
+
 	reqBody := ChatRequest{
 		Model:       s.config.Model,
 		Messages:    messages,
@@ -232,10 +242,10 @@ func BuildReportPrompt(analysis *VideoAnalysisReportInput) string {
 	// 各项评分 - 20维度
 	sb.WriteString("【详细评分与评价】\n")
 	dimensions := []struct {
-		Name    string
-		Score   float64
-		Weight  float64
-		Comment string
+		Name     string
+		Score    float64
+		Weight   float64
+		Comment  string
 		Category string
 	}{
 		// 整体表现 (4项)
@@ -344,10 +354,10 @@ type VideoAnalysisReportInput struct {
 // ScoresInput 评分输入（20项对齐前端）
 type ScoresInput struct {
 	// 整体表现
-	BallControl        ScoreInput `json:"ball_control"`
-	OffBallMovement    ScoreInput `json:"off_ball_movement"`
-	PressingAwareness  ScoreInput `json:"pressing_awareness"`
-	Positioning        ScoreInput `json:"positioning"`
+	BallControl       ScoreInput `json:"ball_control"`
+	OffBallMovement   ScoreInput `json:"off_ball_movement"`
+	PressingAwareness ScoreInput `json:"pressing_awareness"`
+	Positioning       ScoreInput `json:"positioning"`
 	// 进攻能力
 	WidthParticipation ScoreInput `json:"width_participation"`
 	OffBallSupport     ScoreInput `json:"off_ball_support"`

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -25,50 +27,50 @@ func NewPlayerController(db *gorm.DB) *PlayerController {
 
 // PlayerProfileResponse 球员完整资料响应
 type PlayerProfileResponse struct {
-	ID                  uint     `json:"id"`
-	Nickname            string   `json:"nickname"`
-	RealName            string   `json:"real_name"`
-	BirthDate           string   `json:"birth_date"`
-	Gender              string   `json:"gender"`
-	Age                 int      `json:"age"`
-	Avatar              string   `json:"avatar"`
-	Position            string   `json:"position"`
-	SecondPosition      string   `json:"second_position,omitempty"`
-	DominantFoot        string   `json:"dominant_foot"`
-	Height              float64  `json:"height,omitempty"`
-	Weight              float64  `json:"weight,omitempty"`
-	PlayingStyle        []string `json:"playing_style"`
-	JerseyNumber        int      `json:"jersey_number,omitempty"`
-	JerseyColor         string   `json:"jersey_color,omitempty"`
-	CurrentTeam         string   `json:"current_team,omitempty"`
-	StartYear           int      `json:"start_year,omitempty"`
-	FARegistered        bool     `json:"fa_registered"`
-	Association         string   `json:"association,omitempty"`
-	Province            string   `json:"province"`
-	City                string   `json:"city"`
-	Wechat              string   `json:"wechat,omitempty"`
-	School              string   `json:"school,omitempty"`
-	FatherHeight        float64  `json:"father_height,omitempty"`
-	FatherPhone         string   `json:"father_phone,omitempty"`
-	FatherJob           string   `json:"father_job,omitempty"`
-	FatherAthlete       bool     `json:"father_athlete"`
-	MotherHeight        float64  `json:"mother_height,omitempty"`
-	MotherPhone         string   `json:"mother_phone,omitempty"`
-	MotherJob           string   `json:"mother_job,omitempty"`
-	MotherAthlete       bool     `json:"mother_athlete"`
-	TechnicalTags       []string `json:"technical_tags"`
-	MentalTags          []string `json:"mental_tags"`
-	Experiences         []ExperienceItem `json:"experiences"`
+	ID                  uint              `json:"id"`
+	Nickname            string            `json:"nickname"`
+	RealName            string            `json:"real_name"`
+	BirthDate           string            `json:"birth_date"`
+	Gender              string            `json:"gender"`
+	Age                 int               `json:"age"`
+	Avatar              string            `json:"avatar"`
+	Position            string            `json:"position"`
+	SecondPosition      string            `json:"second_position,omitempty"`
+	DominantFoot        string            `json:"dominant_foot"`
+	Height              float64           `json:"height,omitempty"`
+	Weight              float64           `json:"weight,omitempty"`
+	PlayingStyle        []string          `json:"playing_style"`
+	JerseyNumber        int               `json:"jersey_number,omitempty"`
+	JerseyColor         string            `json:"jersey_color,omitempty"`
+	CurrentTeam         string            `json:"current_team,omitempty"`
+	StartYear           int               `json:"start_year,omitempty"`
+	FARegistered        bool              `json:"fa_registered"`
+	Association         string            `json:"association,omitempty"`
+	Province            string            `json:"province"`
+	City                string            `json:"city"`
+	Wechat              string            `json:"wechat,omitempty"`
+	School              string            `json:"school,omitempty"`
+	FatherHeight        float64           `json:"father_height,omitempty"`
+	FatherPhone         string            `json:"father_phone,omitempty"`
+	FatherJob           string            `json:"father_job,omitempty"`
+	FatherAthlete       bool              `json:"father_athlete"`
+	MotherHeight        float64           `json:"mother_height,omitempty"`
+	MotherPhone         string            `json:"mother_phone,omitempty"`
+	MotherJob           string            `json:"mother_job,omitempty"`
+	MotherAthlete       bool              `json:"mother_athlete"`
+	TechnicalTags       []string          `json:"technical_tags"`
+	MentalTags          []string          `json:"mental_tags"`
+	Experiences         []ExperienceItem  `json:"experiences"`
 	LatestPhysicalTest  *PhysicalTestInfo `json:"latest_physical_test,omitempty"`
-	ProfileCompleteness int      `json:"profile_completeness"`
+	ProfileCompleteness int               `json:"profile_completeness"`
 }
 
 // ExperienceItem 足球经历项
 type ExperienceItem struct {
-	ID         string `json:"id,omitempty"`
-	Period     string `json:"period"`
-	Team       string `json:"team"`
-	Position   string `json:"position"`
+	ID          string `json:"id,omitempty"`
+	Period      string `json:"period"`
+	Team        string `json:"team"`
+	Position    string `json:"position"`
 	Achievement string `json:"achievement,omitempty"`
 }
 
@@ -128,40 +130,40 @@ func (ctrl *PlayerController) GetProfile(c *gin.Context) {
 
 	response := PlayerProfileResponse{
 		ID:                  user.ID,
-		Nickname:           user.Nickname,
-		RealName:           user.Name,
-		BirthDate:          user.BirthDate,
-		Gender:             user.Gender,
-		Age:                user.Age,
-		Avatar:             user.Avatar,
-		Position:           user.Position,
-		SecondPosition:     user.SecondPosition,
-		DominantFoot:       user.Foot,
-		Height:             user.Height,
-		Weight:             user.Weight,
-		PlayingStyle:       playingStyles,
-		JerseyNumber:       user.JerseyNumber,
-		JerseyColor:        user.JerseyColor,
-		CurrentTeam:        user.CurrentTeam,
-		StartYear:          user.StartYear,
-		FARegistered:       user.FARegistered,
-		Association:        user.Association,
-		Province:           user.Province,
-		City:               user.City,
-		Wechat:             user.Wechat,
-		School:             user.School,
-		FatherHeight:       user.FatherHeight,
-		FatherPhone:        user.FatherPhone,
-		FatherJob:          user.FatherJob,
-		FatherAthlete:      user.FatherAthlete,
-		MotherHeight:       user.MotherHeight,
-		MotherPhone:        user.MotherPhone,
-		MotherJob:          user.MotherJob,
-		MotherAthlete:      user.MotherAthlete,
-		TechnicalTags:      technicalTags,
-		MentalTags:         mentalTags,
-		Experiences:        experiences,
-		LatestPhysicalTest: latestTest,
+		Nickname:            user.Nickname,
+		RealName:            user.Name,
+		BirthDate:           user.BirthDate,
+		Gender:              user.Gender,
+		Age:                 user.Age,
+		Avatar:              user.Avatar,
+		Position:            user.Position,
+		SecondPosition:      user.SecondPosition,
+		DominantFoot:        user.Foot,
+		Height:              user.Height,
+		Weight:              user.Weight,
+		PlayingStyle:        playingStyles,
+		JerseyNumber:        user.JerseyNumber,
+		JerseyColor:         user.JerseyColor,
+		CurrentTeam:         user.CurrentTeam,
+		StartYear:           user.StartYear,
+		FARegistered:        user.FARegistered,
+		Association:         user.Association,
+		Province:            user.Province,
+		City:                user.City,
+		Wechat:              user.Wechat,
+		School:              user.School,
+		FatherHeight:        user.FatherHeight,
+		FatherPhone:         user.FatherPhone,
+		FatherJob:           user.FatherJob,
+		FatherAthlete:       user.FatherAthlete,
+		MotherHeight:        user.MotherHeight,
+		MotherPhone:         user.MotherPhone,
+		MotherJob:           user.MotherJob,
+		MotherAthlete:       user.MotherAthlete,
+		TechnicalTags:       technicalTags,
+		MentalTags:          mentalTags,
+		Experiences:         experiences,
+		LatestPhysicalTest:  latestTest,
 		ProfileCompleteness: completeness,
 	}
 
@@ -177,38 +179,38 @@ func (ctrl *PlayerController) UpdateProfile(c *gin.Context) {
 	}
 
 	var req struct {
-		Nickname       *string `json:"nickname"`
-		Avatar         *string `json:"avatar"`
-		Name           *string `json:"name"`
-		BirthDate      *string `json:"birth_date"`
-		Gender         *string `json:"gender"`
+		Nickname       *string  `json:"nickname"`
+		Avatar         *string  `json:"avatar"`
+		Name           *string  `json:"name"`
+		BirthDate      *string  `json:"birth_date"`
+		Gender         *string  `json:"gender"`
 		Height         *float64 `json:"height"`
 		Weight         *float64 `json:"weight"`
-		Position       *string `json:"position"`
-		SecondPosition *string `json:"second_position"`
-		Foot           *string `json:"foot"`
-		Province       *string `json:"province"`
-		City           *string `json:"city"`
-		CurrentTeam    *string `json:"current_team"`
-		PlayingStyle   *string `json:"playing_style"`
-		Wechat         *string `json:"wechat"`
-		School         *string `json:"school"`
-		TechnicalTags  *string `json:"technical_tags"`
-		MentalTags     *string `json:"mental_tags"`
-		Experiences    *string `json:"experiences"`
-		StartYear      *int    `json:"start_year"`
-		FARegistered   *bool   `json:"fa_registered"`
-		Association    *string `json:"association"`
-		JerseyNumber   *int    `json:"jersey_number"`
-		JerseyColor    *string `json:"jersey_color"`
+		Position       *string  `json:"position"`
+		SecondPosition *string  `json:"second_position"`
+		Foot           *string  `json:"foot"`
+		Province       *string  `json:"province"`
+		City           *string  `json:"city"`
+		CurrentTeam    *string  `json:"current_team"`
+		PlayingStyle   *string  `json:"playing_style"`
+		Wechat         *string  `json:"wechat"`
+		School         *string  `json:"school"`
+		TechnicalTags  *string  `json:"technical_tags"`
+		MentalTags     *string  `json:"mental_tags"`
+		Experiences    *string  `json:"experiences"`
+		StartYear      *int     `json:"start_year"`
+		FARegistered   *bool    `json:"fa_registered"`
+		Association    *string  `json:"association"`
+		JerseyNumber   *int     `json:"jersey_number"`
+		JerseyColor    *string  `json:"jersey_color"`
 		FatherHeight   *float64 `json:"father_height"`
-		FatherPhone    *string `json:"father_phone"`
-		FatherJob      *string `json:"father_job"`
-		FatherAthlete  *bool   `json:"father_athlete"`
+		FatherPhone    *string  `json:"father_phone"`
+		FatherJob      *string  `json:"father_job"`
+		FatherAthlete  *bool    `json:"father_athlete"`
 		MotherHeight   *float64 `json:"mother_height"`
-		MotherPhone    *string `json:"mother_phone"`
-		MotherJob      *string `json:"mother_job"`
-		MotherAthlete  *bool   `json:"mother_athlete"`
+		MotherPhone    *string  `json:"mother_phone"`
+		MotherJob      *string  `json:"mother_job"`
+		MotherAthlete  *bool    `json:"mother_athlete"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -442,11 +444,17 @@ func (ctrl *PlayerController) GetPhysicalTests(c *gin.Context) {
 			"plank":              r.Plank,
 			"extra_data":         r.ExtraData,
 			// 来源区分字段（新增）
-			"source":            source,       // "personal" | "club"
-			"club_name":         clubName,     // 个人为 nil，俱乐部为俱乐部名
-			"activity_id":       func() *uint { v := r.ActivityID; if v == 0 { return nil }; return &v }(),
-			"recorder_role":     recorderRole, // "player" | "coach"
-			"created_at":        r.CreatedAt.Format("2006-01-02 15:04"),
+			"source":    source,   // "personal" | "club"
+			"club_name": clubName, // 个人为 nil，俱乐部为俱乐部名
+			"activity_id": func() *uint {
+				v := r.ActivityID
+				if v == 0 {
+					return nil
+				}
+				return &v
+			}(),
+			"recorder_role": recorderRole, // "player" | "coach"
+			"created_at":    r.CreatedAt.Format("2006-01-02 15:04"),
 		}
 	}
 
@@ -507,25 +515,25 @@ func (ctrl *PlayerController) CreatePhysicalTest(c *gin.Context) {
 	}
 
 	record := models.PhysicalTestRecord{
-		PlayerID:          userID,
-		TestDate:          testDate,
-		Sprint30m:         req.Sprint30m,
-		Sprint50m:         req.Sprint50m,
-		Sprint100m:        req.Sprint100m,
-		StandingLongJump:  req.StandingLongJump,
-		PushUp:            req.PushUp,
-		SitAndReach:       req.SitAndReach,
-		Height:            req.Height,
-		Weight:            req.Weight,
-		BMI:               bmi,
-		AgilityLadder:     req.AgilityLadder,
-		TTest:             req.TTest,
-		ShuttleRun:        req.ShuttleRun,
-		VerticalJump:      req.VerticalJump,
-		SitUp:             req.SitUp,
-		Plank:             req.Plank,
-		ExtraData:         req.ExtraData,
-		RecorderID:        userID, // 球员自己录入
+		PlayerID:         userID,
+		TestDate:         testDate,
+		Sprint30m:        req.Sprint30m,
+		Sprint50m:        req.Sprint50m,
+		Sprint100m:       req.Sprint100m,
+		StandingLongJump: req.StandingLongJump,
+		PushUp:           req.PushUp,
+		SitAndReach:      req.SitAndReach,
+		Height:           req.Height,
+		Weight:           req.Weight,
+		BMI:              bmi,
+		AgilityLadder:    req.AgilityLadder,
+		TTest:            req.TTest,
+		ShuttleRun:       req.ShuttleRun,
+		VerticalJump:     req.VerticalJump,
+		SitUp:            req.SitUp,
+		Plank:            req.Plank,
+		ExtraData:        req.ExtraData,
+		RecorderID:       userID, // 球员自己录入
 	}
 
 	if err := ctrl.db.Create(&record).Error; err != nil {
@@ -677,35 +685,181 @@ func (ctrl *PlayerController) GetPlayerPublicProfile(c *gin.Context) {
 	}
 
 	response := gin.H{
-		"id":              user.ID,
-		"nickname":        user.Nickname,
-		"real_name":       user.Name,
-		"avatar":          user.Avatar,
-		"age":             user.Age,
-		"gender":          user.Gender,
-		"position":        user.Position,
-		"second_position": user.SecondPosition,
-		"dominant_foot":   user.Foot,
-		"height":          user.Height,
-		"weight":          user.Weight,
-		"playing_style":   parseJSONArray(user.PlayingStyle),
-		"current_team":    user.CurrentTeam,
-		"start_year":      user.StartYear,
-		"jersey_number":   user.JerseyNumber,
-		"jersey_color":    user.JerseyColor,
-		"province":        user.Province,
-		"city":            user.City,
-		"school":          user.School,
-		"fa_registered":   user.FARegistered,
-		"association":     user.Association,
-		"technical_tags":  parseJSONArray(user.TechnicalTags),
-		"mental_tags":     parseJSONArray(user.MentalTags),
-		"experiences":     parseExperiences(user.Experiences),
+		"id":                   user.ID,
+		"nickname":             user.Nickname,
+		"real_name":            user.Name,
+		"avatar":               user.Avatar,
+		"age":                  user.Age,
+		"gender":               user.Gender,
+		"position":             user.Position,
+		"second_position":      user.SecondPosition,
+		"dominant_foot":        user.Foot,
+		"height":               user.Height,
+		"weight":               user.Weight,
+		"playing_style":        parseJSONArray(user.PlayingStyle),
+		"current_team":         user.CurrentTeam,
+		"start_year":           user.StartYear,
+		"jersey_number":        user.JerseyNumber,
+		"jersey_color":         user.JerseyColor,
+		"province":             user.Province,
+		"city":                 user.City,
+		"school":               user.School,
+		"fa_registered":        user.FARegistered,
+		"association":          user.Association,
+		"technical_tags":       parseJSONArray(user.TechnicalTags),
+		"mental_tags":          parseJSONArray(user.MentalTags),
+		"experiences":          parseExperiences(user.Experiences),
 		"latest_physical_test": latestTest,
-		"created_at":      user.CreatedAt,
+		"created_at":           user.CreatedAt,
 	}
 
 	utils.Success(c, "", gin.H{"player": response})
+}
+
+// GetHomepage 获取球员个人主页聚合数据（公开可访问，登录后补充访客权限）
+func (ctrl *PlayerController) GetHomepage(c *gin.Context) {
+	idStr := c.Param("playerId")
+	var playerID uint
+	if _, err := fmt.Sscanf(idStr, "%d", &playerID); err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的用户ID")
+		return
+	}
+
+	user, err := models.NewUserRepository(ctrl.db).FindByID(playerID)
+	if err != nil || user == nil || user.Status != models.StatusActive {
+		utils.Error(c, http.StatusNotFound, "球员不存在")
+		return
+	}
+
+	currentUser := ctrl.getOptionalCurrentUser(c)
+	isOwnProfile := currentUser != nil && currentUser.ID == playerID
+	privacy := parsePrivacySettings(user.PrivacySettings)
+	if !privacy.ProfileVisible && !isOwnProfile {
+		utils.Error(c, http.StatusForbidden, "该球员主页未公开")
+		return
+	}
+
+	showRealName := privacy.ShowRealName || isOwnProfile
+	displayName := user.Nickname
+	if displayName == "" && showRealName {
+		displayName = user.Name
+	}
+	if displayName == "" {
+		displayName = fmt.Sprintf("球员%d", user.ID)
+	}
+
+	affiliation := ctrl.getHomepageAffiliation(playerID)
+	physicalRecords := ctrl.getHomepagePhysicalRecords(playerID)
+	weeklyReports := ctrl.getHomepageWeeklyReports(playerID)
+	matches := ctrl.getHomepageMatches(playerID)
+	reportList, reportsTotal, completedReports, avgReportRating := ctrl.getHomepageReports(playerID)
+	scoutReports := ctrl.getHomepageScoutReports(playerID)
+	posts := ctrl.getHomepagePosts(playerID)
+	followersCount, followingCount, isFollowing, isMutual := ctrl.getHomepageSocial(playerID, currentUser)
+	actions := ctrl.getHomepageActions(currentUser, playerID)
+	timeline := ctrl.buildHomepageTimeline(physicalRecords, weeklyReports, matches, reportList, scoutReports, posts)
+
+	showSchool := isOwnProfile
+	showReportDetails := isOwnProfile || currentUser != nil
+	response := gin.H{
+		"profile": gin.H{
+			"id":          user.ID,
+			"nickname":    user.Nickname,
+			"displayName": displayName,
+			"realName": func() string {
+				if showRealName {
+					return user.Name
+				}
+				return ""
+			}(),
+			"avatar":         user.Avatar,
+			"age":            user.Age,
+			"ageGroup":       firstNonEmpty(affiliation["ageGroup"], getHomepageAgeGroup(user.Age)),
+			"gender":         user.Gender,
+			"position":       user.Position,
+			"secondPosition": user.SecondPosition,
+			"height":         user.Height,
+			"weight":         user.Weight,
+			"dominantFoot":   firstNonEmpty(user.DominantFoot, user.Foot),
+			"province":       user.Province,
+			"city":           user.City,
+			"school": func() string {
+				if showSchool {
+					return user.School
+				}
+				return ""
+			}(),
+			"currentTeam":         firstNonEmpty(affiliation["teamName"], user.CurrentTeam, user.Club),
+			"startYear":           user.StartYear,
+			"jerseyNumber":        user.JerseyNumber,
+			"jerseyColor":         user.JerseyColor,
+			"faRegistered":        user.FARegistered,
+			"association":         user.Association,
+			"playingStyle":        parseJSONArray(user.PlayingStyle),
+			"technicalTags":       parseJSONArray(user.TechnicalTags),
+			"mentalTags":          parseJSONArray(user.MentalTags),
+			"experiences":         parseExperiences(user.Experiences),
+			"profileCompleteness": ctrl.calculateCompleteness(user),
+			"updatedAt":           user.UpdatedAt.Format("2006-01-02 15:04:05"),
+		},
+		"affiliation": affiliation,
+		"visibility": gin.H{
+			"profileVisible":    privacy.ProfileVisible,
+			"showRealName":      showRealName,
+			"showSchool":        showSchool,
+			"showFamily":        isOwnProfile,
+			"showReportDetails": showReportDetails,
+			"canMessage":        actions["canMessage"],
+			"canInvite":         actions["canInviteTrial"],
+			"canEdit":           actions["canEdit"],
+		},
+		"stats": gin.H{
+			"followersCount":        followersCount,
+			"followingCount":        followingCount,
+			"reportsCount":          reportsTotal,
+			"completedReportsCount": completedReports,
+			"averageReportRating":   avgReportRating,
+			"physicalTestCount":     len(physicalRecords),
+			"weeklyReportCount":     len(weeklyReports),
+			"matchCount":            len(matches),
+			"scoutReportsCount":     len(scoutReports),
+			"postCount":             len(posts),
+		},
+		"physicalTests": gin.H{
+			"records": physicalRecords,
+			"latest":  firstHomepageItem(physicalRecords),
+		},
+		"weeklyReports": gin.H{
+			"total": len(weeklyReports),
+			"list":  weeklyReports,
+		},
+		"matches": gin.H{
+			"total": len(matches),
+			"list":  matches,
+		},
+		"reports": gin.H{
+			"total": reportsTotal,
+			"list":  reportList,
+		},
+		"scoutReports": gin.H{
+			"total": len(scoutReports),
+			"list":  scoutReports,
+		},
+		"posts": gin.H{
+			"total": len(posts),
+			"list":  posts,
+		},
+		"timeline": timeline,
+		"social": gin.H{
+			"followersCount": followersCount,
+			"followingCount": followingCount,
+			"isFollowing":    isFollowing,
+			"isMutual":       isMutual,
+		},
+		"actions": actions,
+	}
+
+	utils.Success(c, "", response)
 }
 
 // GetPublicPhysicalTests 获取球员公开体测记录（无需登录，供主页展示用）
@@ -793,9 +947,15 @@ func (ctrl *PlayerController) GetPublicPhysicalTests(c *gin.Context) {
 			"plank":              r.Plank,
 			"source":             source,
 			"club_name":          clubName,
-			"activity_id":        func() *uint { v := r.ActivityID; if v == 0 { return nil }; return &v }(),
-			"recorder_role":      recorderRole,
-			"created_at":         r.CreatedAt.Format("2006-01-02 15:04"),
+			"activity_id": func() *uint {
+				v := r.ActivityID
+				if v == 0 {
+					return nil
+				}
+				return &v
+			}(),
+			"recorder_role": recorderRole,
+			"created_at":    r.CreatedAt.Format("2006-01-02 15:04"),
 		}
 	}
 
@@ -806,6 +966,489 @@ func (ctrl *PlayerController) GetPublicPhysicalTests(c *gin.Context) {
 }
 
 // ============ 辅助函数 ============
+
+func (ctrl *PlayerController) getOptionalCurrentUser(c *gin.Context) *models.User {
+	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
+	if authHeader == "" {
+		return nil
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	if token == "" || token == authHeader {
+		return nil
+	}
+	claims, err := middleware.ParseToken(token)
+	if err != nil {
+		return nil
+	}
+	user, err := models.NewUserRepository(ctrl.db).FindByID(claims.UserID)
+	if err != nil || user == nil || user.Status != models.StatusActive {
+		return nil
+	}
+	return user
+}
+
+func (ctrl *PlayerController) getHomepageAffiliation(playerID uint) gin.H {
+	var teamPlayer models.TeamPlayer
+	if err := ctrl.db.Preload("Team.Club").
+		Where("user_id = ? AND status = ?", playerID, "active").
+		Order("joined_at DESC, id DESC").
+		First(&teamPlayer).Error; err == nil {
+		teamName := ""
+		ageGroup := ""
+		var clubID uint
+		clubName := ""
+		clubLogo := ""
+		clubMemberLevel := ""
+		if teamPlayer.Team != nil {
+			teamName = teamPlayer.Team.Name
+			ageGroup = teamPlayer.Team.AgeGroup
+			clubID = teamPlayer.Team.ClubID
+			if teamPlayer.Team.Club != nil {
+				clubName = teamPlayer.Team.Club.Name
+				clubLogo = teamPlayer.Team.Club.Logo
+				clubMemberLevel = string(teamPlayer.Team.Club.MemberLevel)
+			}
+		}
+		return gin.H{
+			"clubId":          clubID,
+			"clubName":        clubName,
+			"clubLogo":        clubLogo,
+			"clubMemberLevel": clubMemberLevel,
+			"teamId":          teamPlayer.TeamID,
+			"teamName":        teamName,
+			"ageGroup":        ageGroup,
+			"jerseyNumber":    teamPlayer.JerseyNumber,
+			"position":        teamPlayer.Position,
+			"joinedAt":        formatHomepageTime(teamPlayer.JoinedAt),
+			"status":          teamPlayer.Status,
+		}
+	}
+
+	var clubPlayer models.ClubPlayer
+	if err := ctrl.db.Preload("Club").
+		Where("user_id = ? AND status = ?", playerID, "active").
+		Order("join_date DESC, id DESC").
+		First(&clubPlayer).Error; err == nil {
+		clubName := ""
+		clubLogo := ""
+		clubMemberLevel := ""
+		if clubPlayer.Club != nil {
+			clubName = clubPlayer.Club.Name
+			clubLogo = clubPlayer.Club.Logo
+			clubMemberLevel = string(clubPlayer.Club.MemberLevel)
+		}
+		return gin.H{
+			"clubId":          clubPlayer.ClubID,
+			"clubName":        clubName,
+			"clubLogo":        clubLogo,
+			"clubMemberLevel": clubMemberLevel,
+			"ageGroup":        clubPlayer.AgeGroup,
+			"position":        clubPlayer.Position,
+			"joinedAt":        formatHomepageTime(clubPlayer.JoinDate),
+			"status":          clubPlayer.Status,
+		}
+	}
+
+	return gin.H{}
+}
+
+func (ctrl *PlayerController) getHomepagePhysicalRecords(playerID uint) []gin.H {
+	var records []models.PhysicalTestRecord
+	ctrl.db.Preload("Activity.Club").
+		Where("player_id = ?", playerID).
+		Order("test_date DESC, created_at DESC").
+		Limit(20).
+		Find(&records)
+
+	items := make([]gin.H, 0, len(records))
+	for _, record := range records {
+		source := "personal"
+		sourceLabel := "球员/家长自测"
+		clubName := ""
+		activityName := ""
+		if record.ActivityID > 0 && record.ClubID > 0 {
+			source = "club"
+			sourceLabel = "俱乐部官方体测"
+			if record.Activity != nil {
+				activityName = record.Activity.Name
+				if record.Activity.Club != nil {
+					clubName = record.Activity.Club.Name
+				}
+			}
+		}
+		recorderRole := "player"
+		if record.RecorderID != 0 && record.RecorderID != playerID {
+			recorderRole = "coach"
+		}
+		items = append(items, gin.H{
+			"id":               record.ID,
+			"testDate":         formatHomepageTime(record.TestDate),
+			"source":           source,
+			"sourceLabel":      sourceLabel,
+			"clubName":         clubName,
+			"activityName":     activityName,
+			"recorderRole":     recorderRole,
+			"height":           record.Height,
+			"weight":           record.Weight,
+			"bmi":              record.BMI,
+			"sprint30m":        record.Sprint30m,
+			"sprint50m":        record.Sprint50m,
+			"sprint100m":       record.Sprint100m,
+			"agilityLadder":    record.AgilityLadder,
+			"tTest":            record.TTest,
+			"shuttleRun":       record.ShuttleRun,
+			"standingLongJump": record.StandingLongJump,
+			"verticalJump":     record.VerticalJump,
+			"sitAndReach":      record.SitAndReach,
+			"pushUp":           record.PushUp,
+			"sitUp":            record.SitUp,
+			"plank":            record.Plank,
+		})
+	}
+	return items
+}
+
+func (ctrl *PlayerController) getHomepageWeeklyReports(playerID uint) []gin.H {
+	var reports []models.WeeklyReport
+	ctrl.db.Preload("Team").
+		Where("player_id = ?", playerID).
+		Order("week_start DESC, created_at DESC").
+		Limit(6).
+		Find(&reports)
+
+	items := make([]gin.H, 0, len(reports))
+	for _, report := range reports {
+		year, week := report.WeekStart.ISOWeek()
+		teamName := ""
+		if report.Team != nil {
+			teamName = report.Team.Name
+		}
+		items = append(items, gin.H{
+			"id":            report.ID,
+			"teamName":      teamName,
+			"weekLabel":     fmt.Sprintf("%d年第%d周", year, week),
+			"weekStart":     formatHomepageTime(report.WeekStart),
+			"weekEnd":       formatHomepageTime(report.WeekEnd),
+			"submitStatus":  report.SubmitStatus,
+			"reviewStatus":  report.ReviewStatus,
+			"selfAverage":   homepageAverageInts(report.SelfAttitudeRating, report.SelfTechniqueRating, report.SelfTeamworkRating),
+			"coachAverage":  homepageAverageInts(report.CoachAttitudeRating, report.CoachTechniqueRating, report.CoachTacticsRating, report.CoachKnowledgeRating),
+			"reviewComment": report.ReviewComment,
+			"suggestions":   report.Suggestions,
+			"nextWeekFocus": report.NextWeekFocus,
+			"createdAt":     formatHomepageTime(report.CreatedAt),
+		})
+	}
+	return items
+}
+
+func (ctrl *PlayerController) getHomepageMatches(playerID uint) []gin.H {
+	var reviews []models.PlayerReview
+	ctrl.db.Preload("Match.Team").
+		Where("player_id = ?", playerID).
+		Order("submitted_at DESC, created_at DESC").
+		Limit(6).
+		Find(&reviews)
+
+	items := make([]gin.H, 0, len(reviews))
+	for _, review := range reviews {
+		matchName := "比赛记录"
+		matchDate := formatHomepageTime(review.CreatedAt)
+		opponent := ""
+		score := ""
+		result := ""
+		status := review.Status
+		teamName := ""
+		if review.Match != nil {
+			matchName = review.Match.MatchName
+			matchDate = review.Match.MatchDate
+			opponent = review.Match.Opponent
+			score = fmt.Sprintf("%d:%d", review.Match.OurScore, review.Match.OppScore)
+			result = review.Match.Result
+			status = review.Match.Status
+			if review.Match.Team != nil {
+				teamName = review.Match.Team.Name
+			}
+		}
+		items = append(items, gin.H{
+			"id":           review.MatchID,
+			"reviewId":     review.ID,
+			"matchName":    matchName,
+			"matchDate":    matchDate,
+			"opponent":     opponent,
+			"score":        score,
+			"result":       result,
+			"status":       status,
+			"teamName":     teamName,
+			"performance":  review.Performance,
+			"goals":        review.Goals,
+			"assists":      review.Assists,
+			"saves":        review.Saves,
+			"coachRating":  review.CoachRating,
+			"coachComment": review.CoachComment,
+			"highlights":   review.Highlights,
+			"createdAt":    formatHomepageTime(review.CreatedAt),
+		})
+	}
+	return items
+}
+
+func (ctrl *PlayerController) getHomepageReports(playerID uint) ([]gin.H, int64, int64, float64) {
+	var total int64
+	ctrl.db.Model(&models.Report{}).Where("user_id = ?", playerID).Count(&total)
+
+	var completedTotal int64
+	ctrl.db.Model(&models.Report{}).
+		Where("user_id = ? AND status = ?", playerID, models.ReportStatusCompleted).
+		Count(&completedTotal)
+
+	var avg float64
+	ctrl.db.Model(&models.Report{}).
+		Select("COALESCE(AVG(overall_rating), 0)").
+		Where("user_id = ? AND status = ? AND overall_rating > 0", playerID, models.ReportStatusCompleted).
+		Row().
+		Scan(&avg)
+
+	var reports []models.Report
+	ctrl.db.Where("user_id = ? AND status = ?", playerID, models.ReportStatusCompleted).
+		Order("created_at DESC").
+		Limit(5).
+		Find(&reports)
+
+	analystIDs := make([]uint, 0)
+	seenAnalysts := map[uint]bool{}
+	for _, report := range reports {
+		if report.AnalystID > 0 && !seenAnalysts[report.AnalystID] {
+			seenAnalysts[report.AnalystID] = true
+			analystIDs = append(analystIDs, report.AnalystID)
+		}
+	}
+	analystNames := map[uint]string{}
+	if len(analystIDs) > 0 {
+		var users []models.User
+		ctrl.db.Select("id, name, nickname").Where("id IN ?", analystIDs).Find(&users)
+		for _, u := range users {
+			analystNames[u.ID] = firstNonEmpty(u.Nickname, u.Name)
+		}
+	}
+
+	items := make([]gin.H, 0, len(reports))
+	for _, report := range reports {
+		items = append(items, gin.H{
+			"id":             report.ID,
+			"createdAt":      formatHomepageTime(report.CreatedAt),
+			"status":         report.Status,
+			"playerName":     report.PlayerName,
+			"playerPosition": report.PlayerPosition,
+			"overallRating":  report.OverallRating,
+			"offenseRating":  report.OffenseRating,
+			"defenseRating":  report.DefenseRating,
+			"summary":        report.Summary,
+			"strengths":      homepageStringList(report.Strengths),
+			"weaknesses":     homepageStringList(report.Weaknesses),
+			"suggestions":    report.Suggestions,
+			"potential":      report.Potential,
+			"analystName":    analystNames[report.AnalystID],
+		})
+	}
+
+	return items, total, completedTotal, avg
+}
+
+func (ctrl *PlayerController) getHomepageScoutReports(playerID uint) []gin.H {
+	var reports []models.ScoutReport
+	ctrl.db.Preload("Scout.User").
+		Where("player_id = ? AND status = ?", playerID, "published").
+		Order("published_at DESC, created_at DESC").
+		Limit(6).
+		Find(&reports)
+
+	items := make([]gin.H, 0, len(reports))
+	for _, report := range reports {
+		reportDate := report.CreatedAt
+		if report.PublishedAt != nil {
+			reportDate = *report.PublishedAt
+		}
+
+		scoutName := "球探"
+		scoutOrganization := ""
+		scoutUserID := uint(0)
+		if report.Scout != nil {
+			scoutOrganization = report.Scout.CurrentOrganization
+			if report.Scout.User != nil {
+				scoutUserID = report.Scout.User.ID
+				scoutName = firstNonEmpty(report.Scout.User.Nickname, report.Scout.User.Name, scoutName)
+			}
+		}
+
+		items = append(items, gin.H{
+			"id":              report.ID,
+			"createdAt":       formatHomepageTime(reportDate),
+			"status":          report.Status,
+			"scoutId":         report.ScoutID,
+			"scoutUserId":     scoutUserID,
+			"scoutName":       scoutName,
+			"organization":    scoutOrganization,
+			"overallRating":   report.OverallRating,
+			"potentialRating": report.PotentialRating,
+			"strengths":       homepageStringList(report.Strengths),
+			"weaknesses":      homepageStringList(report.Weaknesses),
+			"technicalSkills": homepageObject(report.TechnicalSkills),
+			"summary":         report.Summary,
+			"recommendation":  report.Recommendation,
+			"targetClub":      report.TargetClub,
+			"views":           report.Views,
+			"likes":           report.Likes,
+			"publishedAt":     formatHomepageTime(reportDate),
+		})
+	}
+	return items
+}
+
+func (ctrl *PlayerController) getHomepagePosts(playerID uint) []gin.H {
+	var posts []models.Post
+	ctrl.db.Where("user_id = ?", playerID).
+		Order("created_at DESC").
+		Limit(6).
+		Find(&posts)
+
+	items := make([]gin.H, 0, len(posts))
+	for _, post := range posts {
+		items = append(items, gin.H{
+			"id":            post.ID,
+			"content":       post.Content,
+			"images":        post.GetImagesArray(),
+			"roleTag":       post.RoleTag,
+			"likesCount":    post.LikesCount,
+			"commentsCount": post.CommentsCount,
+			"createdAt":     formatHomepageTime(post.CreatedAt),
+		})
+	}
+	return items
+}
+
+func (ctrl *PlayerController) getHomepageSocial(playerID uint, currentUser *models.User) (int64, int64, bool, bool) {
+	var followersCount int64
+	var followingCount int64
+	ctrl.db.Model(&models.Follow{}).Where("following_id = ?", playerID).Count(&followersCount)
+	ctrl.db.Model(&models.Follow{}).Where("follower_id = ?", playerID).Count(&followingCount)
+
+	isFollowing := false
+	isMutual := false
+	if currentUser != nil && currentUser.ID != playerID {
+		var count int64
+		ctrl.db.Model(&models.Follow{}).
+			Where("follower_id = ? AND following_id = ?", currentUser.ID, playerID).
+			Count(&count)
+		isFollowing = count > 0
+		ctrl.db.Model(&models.Follow{}).
+			Where("follower_id = ? AND following_id = ?", playerID, currentUser.ID).
+			Count(&count)
+		isMutual = isFollowing && count > 0
+	}
+
+	return followersCount, followingCount, isFollowing, isMutual
+}
+
+func (ctrl *PlayerController) getHomepageActions(currentUser *models.User, playerID uint) gin.H {
+	isOwn := currentUser != nil && currentUser.ID == playerID
+	role := ""
+	if currentUser != nil {
+		role = string(currentUser.CurrentRole)
+		if role == "" {
+			role = string(currentUser.Role)
+		}
+	}
+	return gin.H{
+		"canEdit":              isOwn,
+		"canFollow":            currentUser != nil && !isOwn,
+		"canMessage":           currentUser != nil && !isOwn,
+		"canInviteTrial":       role == "club" || role == "coach" || role == "scout" || role == "admin",
+		"canCreateScoutReport": role == "scout" || role == "admin",
+	}
+}
+
+func (ctrl *PlayerController) buildHomepageTimeline(physical []gin.H, weekly []gin.H, matches []gin.H, reports []gin.H, scoutReports []gin.H, posts []gin.H) []gin.H {
+	items := make([]gin.H, 0, len(physical)+len(weekly)+len(matches)+len(reports)+len(scoutReports)+len(posts))
+	for _, item := range physical {
+		items = append(items, gin.H{
+			"id":      fmt.Sprintf("physical-%v", item["id"]),
+			"type":    "physical_test",
+			"date":    item["testDate"],
+			"title":   firstNonEmpty(item["activityName"], "体测记录"),
+			"summary": fmt.Sprintf("%s · %s", firstNonEmpty(item["sourceLabel"], "体测数据"), firstNonEmpty(item["clubName"])),
+			"source": func() string {
+				if item["source"] == "club" {
+					return "club"
+				}
+				return "player"
+			}(),
+			"sourceLabel": firstNonEmpty(item["sourceLabel"], "体测数据"),
+		})
+	}
+	for _, item := range weekly {
+		items = append(items, gin.H{
+			"id":          fmt.Sprintf("weekly-%v", item["id"]),
+			"type":        "weekly_report",
+			"date":        item["weekEnd"],
+			"title":       fmt.Sprintf("%s 周报", firstNonEmpty(item["weekLabel"], "训练")),
+			"summary":     firstNonEmpty(item["reviewComment"], item["suggestions"], item["submitStatus"]),
+			"source":      "coach",
+			"sourceLabel": "周报反馈",
+		})
+	}
+	for _, item := range matches {
+		items = append(items, gin.H{
+			"id":          fmt.Sprintf("match-%v", item["id"]),
+			"type":        "match",
+			"date":        item["matchDate"],
+			"title":       firstNonEmpty(item["matchName"], "比赛总结"),
+			"summary":     firstNonEmpty(item["coachComment"], item["performance"], item["score"]),
+			"source":      "coach",
+			"sourceLabel": "比赛点评",
+		})
+	}
+	for _, item := range reports {
+		items = append(items, gin.H{
+			"id":          fmt.Sprintf("report-%v", item["id"]),
+			"type":        "report",
+			"date":        item["createdAt"],
+			"title":       "视频分析报告",
+			"summary":     firstNonEmpty(item["summary"], item["suggestions"]),
+			"source":      "analyst",
+			"sourceLabel": "平台分析师",
+		})
+	}
+	for _, item := range scoutReports {
+		items = append(items, gin.H{
+			"id":          fmt.Sprintf("scout-report-%v", item["id"]),
+			"type":        "scout_report",
+			"date":        item["publishedAt"],
+			"title":       "球探观察报告",
+			"summary":     firstNonEmpty(item["summary"], item["recommendation"], item["targetClub"]),
+			"source":      "scout",
+			"sourceLabel": firstNonEmpty(item["scoutName"], "球探"),
+		})
+	}
+	for _, item := range posts {
+		items = append(items, gin.H{
+			"id":          fmt.Sprintf("post-%v", item["id"]),
+			"type":        "post",
+			"date":        item["createdAt"],
+			"title":       "训练动态",
+			"summary":     item["content"],
+			"source":      "player",
+			"sourceLabel": "球员动态",
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return firstNonEmpty(items[i]["date"]) > firstNonEmpty(items[j]["date"])
+	})
+	if len(items) > 12 {
+		return items[:12]
+	}
+	return items
+}
 
 func (ctrl *PlayerController) getLatestPhysicalTest(userID uint) (*models.PhysicalTestRecord, error) {
 	var record models.PhysicalTestRecord
@@ -958,6 +1601,89 @@ func addPtrInt(m map[string]interface{}, key string, val *int) {
 	if val != nil {
 		m[key] = *val
 	}
+}
+
+func firstHomepageItem(items []gin.H) interface{} {
+	if len(items) == 0 {
+		return nil
+	}
+	return items[0]
+}
+
+func firstNonEmpty(values ...interface{}) string {
+	for _, value := range values {
+		switch v := value.(type) {
+		case string:
+			if strings.TrimSpace(v) != "" {
+				return v
+			}
+		case fmt.Stringer:
+			if strings.TrimSpace(v.String()) != "" {
+				return v.String()
+			}
+		}
+	}
+	return ""
+}
+
+func formatHomepageTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format("2006-01-02")
+}
+
+func getHomepageAgeGroup(age int) string {
+	if age <= 0 {
+		return ""
+	}
+	if age <= 12 {
+		return "U12"
+	}
+	if age <= 14 {
+		return "U14"
+	}
+	if age <= 16 {
+		return "U16"
+	}
+	return "U18"
+}
+
+func homepageAverageInts(values ...int) float64 {
+	total := 0
+	count := 0
+	for _, value := range values {
+		if value > 0 {
+			total += value
+			count++
+		}
+	}
+	if count == 0 {
+		return 0
+	}
+	return float64(total) / float64(count)
+}
+
+func homepageStringList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return []string{}
+	}
+	items := parseJSONArray(raw)
+	if len(items) > 0 {
+		return items
+	}
+	return []string{raw}
+}
+
+func homepageObject(raw string) gin.H {
+	if strings.TrimSpace(raw) == "" {
+		return gin.H{}
+	}
+	var item map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &item); err != nil {
+		return gin.H{}
+	}
+	return gin.H(item)
 }
 
 func calculateBMI(height, weight *float64) *float64 {
