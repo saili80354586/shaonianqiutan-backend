@@ -20,6 +20,20 @@ import (
 	wshub "github.com/shaonianqiutan/backend/wshub"
 )
 
+func isAllowedOrigin(origin string, allowedOrigins []string) bool {
+	if origin == "" {
+		return false
+	}
+
+	for _, allowedOrigin := range allowedOrigins {
+		if origin == allowedOrigin {
+			return true
+		}
+	}
+
+	return false
+}
+
 func main() {
 	// 加载环境变量
 	config.LoadEnv()
@@ -120,21 +134,7 @@ func main() {
 	allowedOrigins := config.GetCORSOrigins()
 	r.Use(func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
-		// 检查请求的 Origin 是否在允许列表中
-		allowed := false
-		for _, o := range allowedOrigins {
-			if origin == o {
-				allowed = true
-				break
-			}
-		}
-		// 如果 Origin 不在允许列表且不是空（如直接curl请求），开发模式允许localhost
-		if !allowed && origin != "" {
-			if config.IsDevMode() && (strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1")) {
-				allowed = true
-			}
-		}
-		if allowed && origin != "" {
+		if isAllowedOrigin(origin, allowedOrigins) {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 		}
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -174,12 +174,7 @@ func main() {
 				if origin == "" {
 					return true
 				}
-				for _, allowedOrigin := range allowedOrigins {
-					if origin == allowedOrigin {
-						return true
-					}
-				}
-				return config.IsDevMode() && (strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1"))
+				return isAllowedOrigin(origin, allowedOrigins)
 			},
 		}
 

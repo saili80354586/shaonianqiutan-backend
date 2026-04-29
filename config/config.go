@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -68,7 +69,7 @@ func GetBaseUrl() string {
 	if url == "" {
 		return "http://localhost:8080"
 	}
-	return url
+	return normalizeOrigin(url)
 }
 
 // GetFrontendURL 获取前端URL（用于CORS配置）
@@ -77,20 +78,46 @@ func GetFrontendURL() string {
 	if url == "" {
 		return "http://localhost:5173"
 	}
-	return url
+	return normalizeOrigin(url)
 }
 
 // GetCORSOrigins 获取允许的CORS源列表
-// 开发模式允许localhost，生产环境只允许配置的FRONTEND_URL
+// CORS_ALLOWED_ORIGINS 支持逗号分隔的多个前端源；FRONTEND_URL 保持向后兼容。
+// 开发模式额外允许常用本地前端源，生产环境只允许显式配置的源。
 func GetCORSOrigins() []string {
+	origins := make([]string, 0, 4)
+	origins = appendOrigins(origins, os.Getenv("CORS_ALLOWED_ORIGINS"))
+	origins = appendUniqueOrigin(origins, GetFrontendURL())
+
 	if IsDevMode() {
-		return []string{
-			"http://localhost:5173",
-			"http://127.0.0.1:5173",
-			"http://localhost:3000",
-			GetFrontendURL(),
+		origins = appendUniqueOrigin(origins, "http://localhost:5173")
+		origins = appendUniqueOrigin(origins, "http://127.0.0.1:5173")
+		origins = appendUniqueOrigin(origins, "http://localhost:3000")
+	}
+
+	return origins
+}
+
+func appendOrigins(origins []string, csv string) []string {
+	for _, origin := range strings.Split(csv, ",") {
+		origins = appendUniqueOrigin(origins, origin)
+	}
+	return origins
+}
+
+func appendUniqueOrigin(origins []string, origin string) []string {
+	normalized := normalizeOrigin(origin)
+	if normalized == "" {
+		return origins
+	}
+	for _, existing := range origins {
+		if existing == normalized {
+			return origins
 		}
 	}
-	// 生产环境只允许配置的域名
-	return []string{GetFrontendURL()}
+	return append(origins, normalized)
+}
+
+func normalizeOrigin(origin string) string {
+	return strings.TrimRight(strings.TrimSpace(origin), "/")
 }
