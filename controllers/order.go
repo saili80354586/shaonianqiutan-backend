@@ -140,46 +140,6 @@ func (ctrl *OrderController) GetOrderDetail(c *gin.Context) {
 	utils.Success(c, "", gin.H{"order": order})
 }
 
-// PayOrder 支付订单
-func (ctrl *OrderController) PayOrder(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == 0 {
-		utils.Error(c, http.StatusUnauthorized, "未认证")
-		return
-	}
-
-	idStr := c.Param("id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
-	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "无效的订单ID")
-		return
-	}
-
-	// 获取支付方式
-	var req struct {
-		Method string `json:"method" binding:"required,oneof=wechat alipay"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Error(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// 模拟支付返回二维码链接
-	var qrCodeUrl string
-	if req.Method == "wechat" {
-		qrCodeUrl = "weixin://wxpay/bizpayurl?pr=mock123"
-	} else {
-		qrCodeUrl = "https://qr.alipay.com/mock123"
-	}
-
-	utils.Success(c, "支付创建成功", gin.H{
-		"order_id":    id,
-		"qr_code_url": qrCodeUrl,
-		"method":      req.Method,
-		"status":      "pending",
-	})
-}
-
 // CancelOrder 取消订单
 func (ctrl *OrderController) CancelOrder(c *gin.Context) {
 	userID := middleware.GetUserID(c)

@@ -34,11 +34,4 @@ func SetupUserRoutes(r *gin.RouterGroup, userController *controllers.UserControl
 		public.GET("/:userId/player", userController.GetPlayerProfile)
 		public.GET("/:userId/reports", userController.GetPublicReports)
 	}
-
-	// 视频上传
-	videoUpload := r.Group("/video")
-	videoUpload.Use(middleware.AuthMiddleware())
-	{
-		videoUpload.POST("/analyze", userController.UploadAndAnalyzeVideo)
-	}
 }

@@ -29,9 +29,6 @@ func SetupOrderRoutes(r *gin.RouterGroup, orderController *controllers.OrderCont
 		// 取消订单
 		order.DELETE("/:id", orderController.CancelOrder)
 
-		// 支付订单
-		order.POST("/:id/payment", orderController.PayOrder)
-
 		// 获取用户订单统计
 		order.GET("/statistics", orderController.GetOrderStatistics)
 

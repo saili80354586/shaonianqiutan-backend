@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/shaonianqiutan/backend/config"
 	"github.com/shaonianqiutan/backend/middleware"
 	"github.com/shaonianqiutan/backend/models"
 	"github.com/shaonianqiutan/backend/services"
@@ -556,101 +555,6 @@ func (ctrl *UserController) DeleteGrowthRecord(c *gin.Context) {
 	}
 
 	utils.Success(c, "成长记录已删除", nil)
-}
-
-// VideoAnalysisResult 视频分析结果
-type VideoAnalysisResult struct {
-	ID           uint                   `json:"id"`
-	VideoURL     string                 `json:"videoUrl"`
-	Status       string                 `json:"status"`
-	Progress     int                    `json:"progress"`
-	AnalysisData map[string]interface{} `json:"analysisData"`
-	Suggestions  []string               `json:"suggestions"`
-}
-
-// UploadAndAnalyzeVideo 上传并分析视频
-func (ctrl *UserController) UploadAndAnalyzeVideo(c *gin.Context) {
-	// 返回模拟分析结果
-	result := VideoAnalysisResult{
-		ID:       1,
-		VideoURL: "https://example.com/video.mp4",
-		Status:   "analyzing",
-		Progress: 50,
-		AnalysisData: map[string]interface{}{
-			"speed":     85,
-			"strength":  78,
-			"technique": 82,
-		},
-		Suggestions: []string{
-			"建议加强射门练习",
-			"体能储备需要提升",
-		},
-	}
-
-	utils.Success(c, "视频分析已启动", gin.H{"result": result})
-}
-
-// GetScoutMapData 获取球探地图数据（从数据库查询）
-func (ctrl *UserController) GetScoutMapData(c *gin.Context) {
-	// 从数据库查询所有球员用户
-	var users []models.User
-	if err := config.GetDB().Where("role = ?", "user").Find(&users).Error; err != nil {
-		utils.Error(c, http.StatusInternalServerError, "查询球员数据失败")
-		return
-	}
-
-	// 组织数据
-	var players []gin.H
-	for _, user := range users {
-		players = append(players, gin.H{
-			"id":       user.ID,
-			"name":     user.Name,
-			"nickname": user.Nickname,
-			"province": user.Province,
-			"city":     user.City,
-			"position": user.Position,
-			"age":      user.Age,
-			"height":   user.Height,
-			"weight":   user.Weight,
-			"foot":     user.Foot,
-			"club":     user.Club,
-			"avatar":   user.Avatar,
-		})
-	}
-
-	// 提取省份列表
-	provinceMap := make(map[string]bool)
-	for _, user := range users {
-		if user.Province != "" {
-			provinceMap[user.Province] = true
-		}
-	}
-	var provinces []string
-	for p := range provinceMap {
-		provinces = append(provinces, p)
-	}
-
-	utils.Success(c, "", gin.H{
-		"players":   players,
-		"total":     len(players),
-		"provinces": provinces,
-	})
-}
-
-// GetPlayersByProvince 按省份获取球员
-func (ctrl *UserController) GetPlayersByProvince(c *gin.Context) {
-	// 返回按省份分组的数据
-	data := map[string][]gin.H{
-		"广东": {
-			{"id": 1, "name": "张三", "city": "广州", "position": "前锋", "age": 15},
-			{"id": 2, "name": "李四", "city": "深圳", "position": "中场", "age": 16},
-		},
-		"北京": {
-			{"id": 3, "name": "王五", "city": "北京", "position": "后卫", "age": 14},
-		},
-	}
-
-	utils.Success(c, "", gin.H{"data": data})
 }
 
 // ========== 账号设置相关 API ==========
