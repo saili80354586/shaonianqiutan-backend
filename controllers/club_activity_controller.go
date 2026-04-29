@@ -3,6 +3,7 @@ package controllers
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -105,6 +106,41 @@ type activityRegistrationRequest struct {
 	PlayerAge      int    `json:"player_age"`
 	PlayerPosition string `json:"player_position"`
 	ContactPhone   string `json:"contact_phone"`
+}
+
+var (
+	activityMobilePattern = regexp.MustCompile(`1[3-9]\d{9}`)
+	activityLinkPattern   = regexp.MustCompile(`(?i)(https?://|www\.|[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+\b)`)
+	activityQRKeywords    = []string{"微信二维码", "二维码", "扫码", "扫一扫", "微信码"}
+)
+
+func auditActivityPublishContent(title, description string) string {
+	if message := auditActivityText("活动标题", title); message != "" {
+		return message
+	}
+	if message := auditActivityText("活动简介", description); message != "" {
+		return message
+	}
+	return ""
+}
+
+func auditActivityText(fieldName, value string) string {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return ""
+	}
+	if activityMobilePattern.FindString(text) != "" {
+		return fieldName + "不能包含手机号，请填写到结构化联系方式字段"
+	}
+	if activityLinkPattern.FindString(text) != "" {
+		return fieldName + "不能包含外部链接，请引导用户在站内查看活动"
+	}
+	for _, keyword := range activityQRKeywords {
+		if strings.Contains(text, keyword) {
+			return fieldName + "不能包含二维码或扫码引导"
+		}
+	}
+	return ""
 }
 
 // 从 location 中解析 province / city / address
@@ -291,6 +327,12 @@ func (c *ClubActivityController) CreateActivity(ctx *gin.Context) {
 	if req.PublishStatus == "" {
 		req.PublishStatus = "published"
 	}
+	if req.PublishStatus == "published" {
+		if auditMessage := auditActivityPublishContent(req.Title, req.Description); auditMessage != "" {
+			utils.ValidationError(ctx, auditMessage)
+			return
+		}
+	}
 
 	status := "upcoming"
 	now := time.Now()
@@ -418,6 +460,13 @@ func (c *ClubActivityController) UpdateActivity(ctx *gin.Context) {
 		activity.Status = "ended"
 	} else {
 		activity.Status = "ongoing"
+	}
+
+	if activity.PublishStatus == "published" {
+		if auditMessage := auditActivityPublishContent(activity.Title, activity.Description); auditMessage != "" {
+			utils.ValidationError(ctx, auditMessage)
+			return
+		}
 	}
 
 	if err := c.db.Save(&activity).Error; err != nil {
@@ -666,9 +715,17 @@ func (c *ClubActivityController) PublishActivity(ctx *gin.Context) {
 		return
 	}
 
-	if err := c.db.Model(&models.ClubActivity{}).
-		Where("id = ? AND club_id = ?", activityID, clubID).
-		Update("publish_status", "published").Error; err != nil {
+	var activity models.ClubActivity
+	if err := c.db.Where("id = ? AND club_id = ?", activityID, clubID).First(&activity).Error; err != nil {
+		utils.NotFoundError(ctx, "活动不存在")
+		return
+	}
+	if auditMessage := auditActivityPublishContent(activity.Title, activity.Description); auditMessage != "" {
+		utils.ValidationError(ctx, auditMessage)
+		return
+	}
+
+	if err := c.db.Model(&activity).Update("publish_status", "published").Error; err != nil {
 		utils.ServerError(ctx, "发布失败")
 		return
 	}
