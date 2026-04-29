@@ -1,0 +1,133 @@
+{
+  "version": "map-score-v2",
+  "groups": {
+    "U8-U10": {
+      "GENERAL": {
+        "sprint_30m": { "direction": "lower_better", "p10": 6.6, "p25": 6.2, "p50": 5.8, "p75": 5.4, "p90": 5.0 },
+        "sprint_50m": { "direction": "lower_better", "p10": 10.8, "p25": 10.2, "p50": 9.6, "p75": 9.0, "p90": 8.4 },
+        "sprint_100m": { "direction": "lower_better", "p10": 20.8, "p25": 19.6, "p50": 18.4, "p75": 17.2, "p90": 16.2 },
+        "agility_ladder": { "direction": "lower_better", "p10": 14.0, "p25": 13.0, "p50": 12.0, "p75": 11.0, "p90": 10.0 },
+        "t_test": { "direction": "lower_better", "p10": 15.2, "p25": 14.2, "p50": 13.2, "p75": 12.2, "p90": 11.4 },
+        "shuttle_run": { "direction": "lower_better", "p10": 15.6, "p25": 14.8, "p50": 14.0, "p75": 13.2, "p90": 12.4 },
+        "standing_long_jump": { "direction": "higher_better", "p10": 110, "p25": 125, "p50": 145, "p75": 165, "p90": 185 },
+        "vertical_jump": { "direction": "higher_better", "p10": 18, "p25": 23, "p50": 29, "p75": 35, "p90": 42 },
+        "sit_and_reach": { "direction": "higher_better", "p10": -3, "p25": 1, "p50": 5, "p75": 9, "p90": 13 },
+        "push_up": { "direction": "higher_better", "p10": 3, "p25": 6, "p50": 10, "p75": 16, "p90": 24 },
+        "sit_up": { "direction": "higher_better", "p10": 10, "p25": 15, "p50": 22, "p75": 30, "p90": 40 },
+        "plank": { "direction": "higher_better", "p10": 15, "p25": 25, "p50": 40, "p75": 65, "p90": 100 }
+      }
+    },
+    "U11-U12": {
+      "GENERAL": {
+        "sprint_30m": { "direction": "lower_better", "p10": 5.20, "p25": 5.00, "p50": 4.80, "p75": 4.60, "p90": 4.45 },
+        "sprint_50m": { "direction": "lower_better", "p10": 9.20, "p25": 8.80, "p50": 8.35, "p75": 7.95, "p90": 7.55 },
+        "sprint_100m": { "direction": "lower_better", "p10": 18.4, "p25": 17.5, "p50": 16.6, "p75": 15.7, "p90": 14.9 },
+        "agility_ladder": { "direction": "lower_better", "p10": 12.8, "p25": 12.0, "p50": 11.1, "p75": 10.3, "p90": 9.6 },
+        "t_test": { "direction": "lower_better", "p10": 14.2, "p25": 13.4, "p50": 12.5, "p75": 11.7, "p90": 10.9 },
+        "shuttle_run": { "direction": "lower_better", "p10": 14.5, "p25": 13.8, "p50": 13.0, "p75": 12.2, "p90": 11.5 },
+        "standing_long_jump": { "direction": "higher_better", "p10": 150, "p25": 170, "p50": 190, "p75": 210, "p90": 225 },
+        "vertical_jump": { "direction": "higher_better", "p10": 24, "p25": 30, "p50": 37, "p75": 44, "p90": 52 },
+        "sit_and_reach": { "direction": "higher_better", "p10": 2, "p25": 5, "p50": 8, "p75": 12, "p90": 16 },
+        "push_up": { "direction": "higher_better", "p10": 8, "p25": 14, "p50": 20, "p75": 27, "p90": 34 },
+        "sit_up": { "direction": "higher_better", "p10": 18, "p25": 24, "p50": 32, "p75": 42, "p90": 52 },
+        "plank": { "direction": "higher_better", "p10": 25, "p25": 40, "p50": 65, "p75": 100, "p90": 145 }
+      },
+      "FWD": {
+        "sprint_30m": { "direction": "lower_better", "p10": 5.10, "p25": 4.92, "p50": 4.72, "p75": 4.52, "p90": 4.36 },
+        "standing_long_jump": { "direction": "higher_better", "p10": 155, "p25": 175, "p50": 195, "p75": 215, "p90": 232 }
+      },
+      "MID": {
+        "sprint_30m": { "direction": "lower_better", "p10": 5.25, "p25": 5.05, "p50": 4.85, "p75": 4.65, "p90": 4.48 },
+        "sit_up": { "direction": "higher_better", "p10": 20, "p25": 26, "p50": 34, "p75": 44, "p90": 55 }
+      },
+      "DEF": {
+        "push_up": { "direction": "higher_better", "p10": 10, "p25": 16, "p50": 22, "p75": 30, "p90": 38 },
+        "standing_long_jump": { "direction": "higher_better", "p10": 150, "p25": 172, "p50": 194, "p75": 214, "p90": 230 }
+      },
+      "GK": {
+        "standing_long_jump": { "direction": "higher_better", "p10": 155, "p25": 178, "p50": 200, "p75": 222, "p90": 238 },
+        "push_up": { "direction": "higher_better", "p10": 10, "p25": 16, "p50": 23, "p75": 31, "p90": 40 }
+      }
+    },
+    "U13-U14": {
+      "GENERAL": {
+        "sprint_30m": { "direction": "lower_better", "p10": 5.00, "p25": 4.82, "p50": 4.62, "p75": 4.45, "p90": 4.25 },
+        "sprint_50m": { "direction": "lower_better", "p10": 8.80, "p25": 8.40, "p50": 8.00, "p75": 7.60, "p90": 7.20 },
+        "sprint_100m": { "direction": "lower_better", "p10": 17.6, "p25": 16.8, "p50": 15.8, "p75": 14.9, "p90": 14.0 },
+        "agility_ladder": { "direction": "lower_better", "p10": 12.0, "p25": 11.2, "p50": 10.4, "p75": 9.7, "p90": 9.0 },
+        "t_test": { "direction": "lower_better", "p10": 13.5, "p25": 12.7, "p50": 11.9, "p75": 11.1, "p90": 10.3 },
+        "shuttle_run": { "direction": "lower_better", "p10": 13.8, "p25": 13.1, "p50": 12.3, "p75": 11.6, "p90": 10.9 },
+        "standing_long_jump": { "direction": "higher_better", "p10": 165, "p25": 185, "p50": 205, "p75": 225, "p90": 245 },
+        "vertical_jump": { "direction": "higher_better", "p10": 28, "p25": 35, "p50": 43, "p75": 52, "p90": 62 },
+        "sit_and_reach": { "direction": "higher_better", "p10": 3, "p25": 6, "p50": 10, "p75": 14, "p90": 18 },
+        "push_up": { "direction": "higher_better", "p10": 10, "p25": 16, "p50": 24, "p75": 34, "p90": 44 },
+        "sit_up": { "direction": "higher_better", "p10": 22, "p25": 30, "p50": 40, "p75": 52, "p90": 64 },
+        "plank": { "direction": "higher_better", "p10": 35, "p25": 55, "p50": 85, "p75": 130, "p90": 180 }
+      },
+      "FWD": {
+        "sprint_30m": { "direction": "lower_better", "p10": 4.90, "p25": 4.72, "p50": 4.52, "p75": 4.35, "p90": 4.18 },
+        "standing_long_jump": { "direction": "higher_better", "p10": 170, "p25": 190, "p50": 212, "p75": 235, "p90": 255 }
+      },
+      "MID": {
+        "sprint_30m": { "direction": "lower_better", "p10": 5.02, "p25": 4.84, "p50": 4.64, "p75": 4.47, "p90": 4.28 },
+        "sit_up": { "direction": "higher_better", "p10": 24, "p25": 32, "p50": 42, "p75": 54, "p90": 66 }
+      },
+      "DEF": {
+        "push_up": { "direction": "higher_better", "p10": 12, "p25": 18, "p50": 27, "p75": 37, "p90": 48 },
+        "standing_long_jump": { "direction": "higher_better", "p10": 168, "p25": 188, "p50": 210, "p75": 232, "p90": 252 }
+      },
+      "GK": {
+        "standing_long_jump": { "direction": "higher_better", "p10": 175, "p25": 195, "p50": 218, "p75": 240, "p90": 260 },
+        "push_up": { "direction": "higher_better", "p10": 12, "p25": 18, "p50": 28, "p75": 38, "p90": 50 }
+      }
+    },
+    "U15-U16": {
+      "GENERAL": {
+        "sprint_30m": { "direction": "lower_better", "p10": 4.82, "p25": 4.62, "p50": 4.40, "p75": 4.22, "p90": 4.05 },
+        "sprint_50m": { "direction": "lower_better", "p10": 8.35, "p25": 7.95, "p50": 7.50, "p75": 7.10, "p90": 6.75 },
+        "sprint_100m": { "direction": "lower_better", "p10": 16.8, "p25": 15.8, "p50": 14.8, "p75": 13.9, "p90": 13.2 },
+        "agility_ladder": { "direction": "lower_better", "p10": 11.4, "p25": 10.6, "p50": 9.8, "p75": 9.1, "p90": 8.5 },
+        "t_test": { "direction": "lower_better", "p10": 12.8, "p25": 12.0, "p50": 11.2, "p75": 10.4, "p90": 9.7 },
+        "shuttle_run": { "direction": "lower_better", "p10": 13.2, "p25": 12.4, "p50": 11.6, "p75": 10.9, "p90": 10.2 },
+        "standing_long_jump": { "direction": "higher_better", "p10": 190, "p25": 210, "p50": 235, "p75": 255, "p90": 275 },
+        "vertical_jump": { "direction": "higher_better", "p10": 34, "p25": 42, "p50": 52, "p75": 62, "p90": 72 },
+        "sit_and_reach": { "direction": "higher_better", "p10": 4, "p25": 8, "p50": 12, "p75": 16, "p90": 21 },
+        "push_up": { "direction": "higher_better", "p10": 16, "p25": 24, "p50": 34, "p75": 46, "p90": 60 },
+        "sit_up": { "direction": "higher_better", "p10": 26, "p25": 36, "p50": 48, "p75": 60, "p90": 74 },
+        "plank": { "direction": "higher_better", "p10": 45, "p25": 70, "p50": 110, "p75": 165, "p90": 230 }
+      }
+    },
+    "U17-U18": {
+      "GENERAL": {
+        "sprint_30m": { "direction": "lower_better", "p10": 4.70, "p25": 4.50, "p50": 4.28, "p75": 4.10, "p90": 3.95 },
+        "sprint_50m": { "direction": "lower_better", "p10": 8.10, "p25": 7.70, "p50": 7.25, "p75": 6.90, "p90": 6.55 },
+        "sprint_100m": { "direction": "lower_better", "p10": 16.2, "p25": 15.2, "p50": 14.2, "p75": 13.4, "p90": 12.7 },
+        "agility_ladder": { "direction": "lower_better", "p10": 11.0, "p25": 10.2, "p50": 9.4, "p75": 8.8, "p90": 8.2 },
+        "t_test": { "direction": "lower_better", "p10": 12.4, "p25": 11.6, "p50": 10.8, "p75": 10.0, "p90": 9.4 },
+        "shuttle_run": { "direction": "lower_better", "p10": 12.8, "p25": 12.0, "p50": 11.2, "p75": 10.5, "p90": 9.8 },
+        "standing_long_jump": { "direction": "higher_better", "p10": 205, "p25": 225, "p50": 250, "p75": 270, "p90": 290 },
+        "vertical_jump": { "direction": "higher_better", "p10": 38, "p25": 48, "p50": 58, "p75": 68, "p90": 80 },
+        "sit_and_reach": { "direction": "higher_better", "p10": 5, "p25": 9, "p50": 13, "p75": 18, "p90": 23 },
+        "push_up": { "direction": "higher_better", "p10": 20, "p25": 30, "p50": 42, "p75": 55, "p90": 70 },
+        "sit_up": { "direction": "higher_better", "p10": 30, "p25": 42, "p50": 55, "p75": 68, "p90": 82 },
+        "plank": { "direction": "higher_better", "p10": 60, "p25": 90, "p50": 140, "p75": 200, "p90": 280 }
+      }
+    },
+    "18+": {
+      "GENERAL": {
+        "sprint_30m": { "direction": "lower_better", "p10": 4.62, "p25": 4.42, "p50": 4.20, "p75": 4.02, "p90": 3.88 },
+        "sprint_50m": { "direction": "lower_better", "p10": 7.95, "p25": 7.55, "p50": 7.10, "p75": 6.75, "p90": 6.40 },
+        "sprint_100m": { "direction": "lower_better", "p10": 15.8, "p25": 14.8, "p50": 13.8, "p75": 13.0, "p90": 12.3 },
+        "agility_ladder": { "direction": "lower_better", "p10": 10.8, "p25": 10.0, "p50": 9.2, "p75": 8.6, "p90": 8.0 },
+        "t_test": { "direction": "lower_better", "p10": 12.2, "p25": 11.4, "p50": 10.6, "p75": 9.8, "p90": 9.2 },
+        "shuttle_run": { "direction": "lower_better", "p10": 12.6, "p25": 11.8, "p50": 11.0, "p75": 10.3, "p90": 9.6 },
+        "standing_long_jump": { "direction": "higher_better", "p10": 215, "p25": 235, "p50": 260, "p75": 280, "p90": 300 },
+        "vertical_jump": { "direction": "higher_better", "p10": 42, "p25": 52, "p50": 62, "p75": 74, "p90": 86 },
+        "sit_and_reach": { "direction": "higher_better", "p10": 5, "p25": 10, "p50": 14, "p75": 19, "p90": 24 },
+        "push_up": { "direction": "higher_better", "p10": 24, "p25": 34, "p50": 48, "p75": 62, "p90": 80 },
+        "sit_up": { "direction": "higher_better", "p10": 34, "p25": 46, "p50": 60, "p75": 75, "p90": 90 },
+        "plank": { "direction": "higher_better", "p10": 75, "p25": 110, "p50": 170, "p75": 240, "p90": 320 }
+      }
+    }
+  }
+}

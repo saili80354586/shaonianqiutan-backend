@@ -11,13 +11,14 @@ func SetupScoutRoutes(r *gin.RouterGroup, scoutController *controllers.ScoutCont
 	// 公开路由（无需认证）
 	scouts := r.Group("/scouts")
 	{
-		scouts.GET("/public", scoutController.GetScoutPublicProfile)     // 通过 user_id 获取球探公开主页
+		scouts.GET("/public", scoutController.GetScoutPublicProfile)         // 通过 user_id 获取球探公开主页
 		scouts.GET("/:id/public", scoutController.GetScoutPublicProfileByID) // 通过 scout_id 获取球探公开主页
 	}
 
 	// 球探路由（需要认证）
 	scout := r.Group("/scout")
 	scout.Use(middleware.AuthMiddleware())
+	scout.Use(middleware.ScoutRoleMiddleware())
 	{
 		// 球探资料
 		scout.GET("/profile", scoutController.GetScoutProfile)

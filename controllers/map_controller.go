@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/rand"
 	"net/http"
 	"sort"
 	"strconv"
@@ -17,6 +16,7 @@ import (
 	"github.com/shaonianqiutan/backend/models"
 	"github.com/shaonianqiutan/backend/repositories"
 	"github.com/shaonianqiutan/backend/utils"
+	"gorm.io/gorm"
 )
 
 // MapController 地图数据控制器
@@ -34,15 +34,15 @@ type NationalMapResponse struct {
 
 // ProvinceAggregate 省份聚合数据
 type ProvinceAggregate struct {
-	ProvinceCode          string  `json:"provinceCode"`
-	ProvinceName          string  `json:"provinceName"`
-	PlayerCount           int64   `json:"playerCount"`
-	ClubCount             int64   `json:"clubCount"`
-	ScoutReportCount      int64   `json:"scoutReportCount"`
-	AvgScore              float64 `json:"avgScore"`
-	NewPlayerCount30d     int64   `json:"newPlayerCount30d"`
-	ReportCoverageRate    float64 `json:"reportCoverageRate"`
-	HeatLevel             int     `json:"heatLevel"`
+	ProvinceCode       string  `json:"provinceCode"`
+	ProvinceName       string  `json:"provinceName"`
+	PlayerCount        int64   `json:"playerCount"`
+	ClubCount          int64   `json:"clubCount"`
+	ScoutReportCount   int64   `json:"scoutReportCount"`
+	AvgScore           float64 `json:"avgScore"`
+	NewPlayerCount30d  int64   `json:"newPlayerCount30d"`
+	ReportCoverageRate float64 `json:"reportCoverageRate"`
+	HeatLevel          int     `json:"heatLevel"`
 }
 
 // ProvincialMapResponse 省市地图响应
@@ -72,17 +72,17 @@ type CityMapResponse struct {
 
 // CityPlayer 城市级球员散点数据
 type CityPlayer struct {
-	ID           uint     `json:"id"`
-	Name         string   `json:"name"`
-	Avatar       string   `json:"avatar"`
-	Position     string   `json:"position"`
-	Age          int      `json:"age"`
-	Score        float64  `json:"score"`
-	Potential    string   `json:"potential"`
-	Tags         []string `json:"tags"`
-	NormalizedX  float64  `json:"normalizedX"`
-	NormalizedY  float64  `json:"normalizedY"`
-	HasReport    bool     `json:"hasReport"`
+	ID          uint     `json:"id"`
+	Name        string   `json:"name"`
+	Avatar      string   `json:"avatar"`
+	Position    string   `json:"position"`
+	Age         int      `json:"age"`
+	Score       float64  `json:"score"`
+	Potential   string   `json:"potential"`
+	Tags        []string `json:"tags"`
+	NormalizedX float64  `json:"normalizedX"`
+	NormalizedY float64  `json:"normalizedY"`
+	HasReport   bool     `json:"hasReport"`
 }
 
 // GetNationalMapData 获取全国地图聚合数据（支持多图层 ?layer=players|clubs|coaches|analysts|scouts|all）
@@ -280,91 +280,8 @@ func (ctrl *MapController) GetPlayersByProvince(c *gin.Context) {
 	})
 }
 
-// ========== 辅助函数 ==========
-
-func calculateHeatLevel(count int64) int {
-	switch {
-	case count >= 200:
-		return 5
-	case count >= 100:
-		return 4
-	case count >= 50:
-		return 3
-	case count >= 20:
-		return 2
-	default:
-		return 1
-	}
-}
-
-func calculateRandomScore(min, max float64) float64 {
-	rand.Seed(time.Now().UnixNano())
-	score := min + rand.Float64()*(max-min)
-	return math.Round(score*10) / 10
-}
-
 func calculatePotential(score float64) string {
-	switch {
-	case score >= 85:
-		return "A"
-	case score >= 75:
-		return "B"
-	case score >= 65:
-		return "C"
-	default:
-		return "D"
-	}
-}
-
-func generateTags(position string) []string {
-	tagMap := map[string][]string{
-		"前锋": {"速度型", "突破强", "射门准"},
-		"中场": {"传球好", "视野广", "控球稳"},
-		"后卫": {"防守硬", "对抗强", "头球好"},
-		"门将": {"反应快", "门线技术好", "指挥能力强"},
-	}
-	tags, ok := tagMap[position]
-	if !ok {
-		return []string{"潜力新星"}
-	}
-	return tags
-}
-
-func generateNormalizedCoordinates(seed uint) (float64, float64) {
-	rand.Seed(int64(seed) + time.Now().Unix()/86400)
-	// 基于正态分布，中心在 0.5，标准差 0.2，确保大部分点落在 0.1-0.9 之间
-	nx := 0.5 + rand.NormFloat64()*0.15
-	ny := 0.5 + rand.NormFloat64()*0.15
-	nx = math.Max(0.05, math.Min(0.95, nx))
-	ny = math.Max(0.05, math.Min(0.95, ny))
-	return nx, ny
-}
-
-func getProvinceCode(name string) string {
-	// 简化版省份编码映射，后续可维护完整对照表
-	codeMap := map[string]string{
-		"北京市": "110000", "天津市": "120000", "上海市": "310000", "重庆市": "500000",
-		"河北省": "130000", "山西省": "140000", "辽宁省": "210000", "吉林省": "220000",
-		"黑龙江省": "230000", "江苏省": "320000", "浙江省": "330000", "安徽省": "340000",
-		"福建省": "350000", "江西省": "360000", "山东省": "370000", "河南省": "410000",
-		"湖北省": "420000", "湖南省": "430000", "广东省": "440000", "海南省": "460000",
-		"四川省": "510000", "贵州省": "520000", "云南省": "530000", "陕西省": "610000",
-		"甘肃省": "620000", "青海省": "630000", "台湾省": "710000", "内蒙古自治区": "150000",
-		"广西壮族自治区": "450000", "西藏自治区": "540000", "宁夏回族自治区": "640000",
-		"新疆维吾尔自治区": "650000", "香港特别行政区": "810000", "澳门特别行政区": "820000",
-	}
-	if code, ok := codeMap[name]; ok {
-		return code
-	}
-	return ""
-}
-
-func getCityCode(name string) string {
-	// 城市编码后续维护完整对照表，暂时用拼音简化
-	if name == "" {
-		return ""
-	}
-	return name
+	return utils.PlayerPotentialFromScore(score)
 }
 
 // GetPlayerMapProfile 获取球员地图详情页资料
@@ -384,69 +301,56 @@ func (ctrl *MapController) GetPlayerMapProfile(c *gin.Context) {
 	mentalTags := parseMapJSONArray(user.MentalTags)
 	experiences := parseMapExperiences(user.Experiences)
 
-	// 计算评分（基于体测数据或随机）
-	score := calculateScoreFromUser(&user)
-	potential := calculatePotential(score)
-	
-	// 如果没有技术标签，生成默认标签
-	if len(technicalTags) == 0 {
-		technicalTags = generateTags(user.Position)
-	}
+	scoreDetail := buildTraceablePlayerScore(db, &user)
+	radar := buildMapRadarFromScore(scoreDetail)
+	physical := buildMapPhysicalItemsFromScore(scoreDetail)
+	reports := buildMapProfileReports(db, user.ID)
+
+	var followers int64
+	db.Model(&models.ScoutFollowPlayer{}).Where("user_id = ?", user.ID).Count(&followers)
 
 	profile := gin.H{
-		"id":       user.ID,
-		"name":     user.Name,
-		"nickname": user.Nickname,
-		"avatar":   user.Avatar,
-		"city":     user.City,
-		"province": user.Province,
-		"age":      user.Age,
-		"position": user.Position,
+		"id":              user.ID,
+		"name":            user.Name,
+		"nickname":        user.Nickname,
+		"avatar":          user.Avatar,
+		"city":            user.City,
+		"province":        user.Province,
+		"age":             user.Age,
+		"position":        user.Position,
 		"second_position": user.SecondPosition,
-		"height":   user.Height,
-		"weight":   user.Weight,
-		"foot":     user.Foot,
-		"club":     user.Club,
-		"current_team": user.CurrentTeam,
-		"start_year": user.StartYear,
-		"jersey_number": user.JerseyNumber,
-		"jersey_color": user.JerseyColor,
-		"fa_registered": user.FARegistered,
-		"association": user.Association,
-		"school": user.School,
-		"tags":     technicalTags,
-		"playing_style": playingStyles,
-		"technical_tags": technicalTags,
-		"mental_tags": mentalTags,
-		"experiences": experiences,
-		"score":    score,
-		"potential": potential,
+		"height":          user.Height,
+		"weight":          user.Weight,
+		"foot":            user.Foot,
+		"club":            user.Club,
+		"current_team":    user.CurrentTeam,
+		"start_year":      user.StartYear,
+		"jersey_number":   user.JerseyNumber,
+		"jersey_color":    user.JerseyColor,
+		"fa_registered":   user.FARegistered,
+		"association":     user.Association,
+		"school":          user.School,
+		"tags":            technicalTags,
+		"playing_style":   playingStyles,
+		"technical_tags":  technicalTags,
+		"mental_tags":     mentalTags,
+		"experiences":     experiences,
+		"score":           scoreDetail.Score,
+		"potential":       scoreDetail.Potential,
+		"scoreBreakdown":  scoreDetail,
 		"heat": gin.H{
-			"views7d":   int(user.ID) % 50,
-			"followers": int(user.ID) % 10,
+			"views7d":   0,
+			"followers": followers,
 		},
-		"radar": gin.H{
-			"visible":   true,
-			"dimensions": []string{"速度", "技术", "身体", "战术", "心理", "潜力"},
-			"values":    []float64{85, 78, 80, 75, 82, 88},
-		},
-		"physical": gin.H{
-			"visible": true,
-			"items": []gin.H{
-				{"name": "30m冲刺", "value": fmt.Sprintf("%.1fs", user.Sprint30m), "percentile": calculateMapPercentile(user.Sprint30m, 4.5, 5.5)},
-				{"name": "立定跳远", "value": fmt.Sprintf("%.0fcm", user.StandingLongJump), "percentile": calculateMapPercentile(user.StandingLongJump, 180, 220)},
-				{"name": "俯卧撑", "value": fmt.Sprintf("%d个", user.PushUp), "percentile": calculateMapPercentile(float64(user.PushUp), 5, 20)},
-			},
-		},
+		"radar":    radar,
+		"physical": physical,
 		"timeline": buildMapTimeline(experiences),
-		"reports": []gin.H{
-			{"id": 101, "type": "ai", "author": "AI分析师", "score": 82, "summary": "突破能力强，建议加强逆足训练"},
-		},
+		"reports":  reports,
 		"permissions": gin.H{
-			"canViewRadar":   true,
-			"canViewPhysical": true,
-			"canViewReports": false,
-			"canContact":     false,
+			"canViewRadar":    scoreDetail.HasScore && len(radar["dimensions"].([]string)) > 0,
+			"canViewPhysical": scoreDetail.HasScore && len(physical["items"].([]gin.H)) > 0,
+			"canViewReports":  false,
+			"canContact":      false,
 		},
 	}
 
@@ -469,9 +373,9 @@ func parseMapExperiences(s string) []gin.H {
 		return []gin.H{}
 	}
 	var items []struct {
-		Period     string `json:"period"`
-		Team       string `json:"team"`
-		Position   string `json:"position"`
+		Period      string `json:"period"`
+		Team        string `json:"team"`
+		Position    string `json:"position"`
 		Achievement string `json:"achievement,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(s), &items); err != nil {
@@ -480,44 +384,174 @@ func parseMapExperiences(s string) []gin.H {
 	result := make([]gin.H, len(items))
 	for i, item := range items {
 		result[i] = gin.H{
-			"date": item.Period,
-			"type": "experience",
-			"title": item.Team,
-			"summary": item.Position,
+			"date":        item.Period,
+			"type":        "experience",
+			"title":       item.Team,
+			"summary":     item.Position,
 			"achievement": item.Achievement,
 		}
 	}
 	return result
 }
 
+type scoutReportScoreAverage struct {
+	Average float64
+	Count   int64
+}
+
+func buildTraceablePlayerScore(db *gorm.DB, user *models.User) utils.PlayerScoreResult {
+	if user == nil {
+		return utils.CalculatePlayerMapScore(utils.PlayerScoreInput{})
+	}
+	scores := buildTraceablePlayerScoreIndex(db, []models.User{*user})
+	if score, ok := scores[user.ID]; ok {
+		return score
+	}
+	return utils.CalculatePlayerMapScore(utils.PlayerScoreInput{User: user})
+}
+
+func buildTraceablePlayerScoreIndex(db *gorm.DB, users []models.User) map[uint]utils.PlayerScoreResult {
+	result := make(map[uint]utils.PlayerScoreResult, len(users))
+	if len(users) == 0 {
+		return result
+	}
+	if db == nil {
+		for i := range users {
+			user := users[i]
+			result[user.ID] = utils.CalculatePlayerMapScore(utils.PlayerScoreInput{User: &user})
+		}
+		return result
+	}
+
+	playerIDs := make([]uint, 0, len(users))
+	for _, user := range users {
+		playerIDs = append(playerIDs, user.ID)
+	}
+	physicalRecords := latestPhysicalRecordsByPlayer(db, playerIDs)
+	reportAverages := scoutReportScoresByPlayer(db, playerIDs)
+
+	for i := range users {
+		user := users[i]
+		reportScore := reportAverages[user.ID]
+		var scoutAverage *float64
+		if reportScore.Count > 0 {
+			avg := reportScore.Average
+			scoutAverage = &avg
+		}
+		result[user.ID] = utils.CalculatePlayerMapScore(utils.PlayerScoreInput{
+			User:               &user,
+			PhysicalRecord:     physicalRecords[user.ID],
+			ScoutReportAverage: scoutAverage,
+			ScoutReportCount:   reportScore.Count,
+		})
+	}
+	return result
+}
+
+func latestPhysicalRecordsByPlayer(db *gorm.DB, playerIDs []uint) map[uint]*models.PhysicalTestRecord {
+	result := make(map[uint]*models.PhysicalTestRecord, len(playerIDs))
+	if len(playerIDs) == 0 {
+		return result
+	}
+	var records []models.PhysicalTestRecord
+	if err := db.Where("player_id IN ?", playerIDs).
+		Order("player_id ASC, test_date DESC, created_at DESC, id DESC").
+		Find(&records).Error; err != nil {
+		return result
+	}
+	for _, record := range records {
+		if _, ok := result[record.PlayerID]; ok {
+			continue
+		}
+		recordCopy := record
+		result[record.PlayerID] = &recordCopy
+	}
+	return result
+}
+
+func scoutReportScoresByPlayer(db *gorm.DB, playerIDs []uint) map[uint]scoutReportScoreAverage {
+	result := make(map[uint]scoutReportScoreAverage, len(playerIDs))
+	if len(playerIDs) == 0 {
+		return result
+	}
+	reportPlayerIDsByUser := reportPlayerIDsByUserID(db, playerIDs)
+	reportPlayerToUser := make(map[uint]uint, len(playerIDs)*2)
+	reportPlayerIDs := make([]uint, 0, len(playerIDs)*2)
+	for _, userID := range playerIDs {
+		for _, reportPlayerID := range reportPlayerIDsByUser[userID] {
+			reportPlayerToUser[reportPlayerID] = userID
+			reportPlayerIDs = append(reportPlayerIDs, reportPlayerID)
+		}
+	}
+	var rows []struct {
+		PlayerID uint
+		Average  float64
+		Count    int64
+	}
+	db.Model(&models.ScoutReport{}).
+		Select("player_id, AVG(overall_rating) AS average, COUNT(*) AS count").
+		Where("player_id IN ? AND status IN ? AND overall_rating > ?", reportPlayerIDs, []string{"published", "adopted"}, 0).
+		Group("player_id").
+		Scan(&rows)
+	for _, row := range rows {
+		userID := reportPlayerToUser[row.PlayerID]
+		if userID == 0 {
+			continue
+		}
+		current := result[userID]
+		total := current.Average*float64(current.Count) + row.Average*float64(row.Count)
+		current.Count += row.Count
+		current.Average = total / float64(current.Count)
+		result[userID] = current
+	}
+	return result
+}
+
+func reportPlayerIDsByUserID(db *gorm.DB, userIDs []uint) map[uint][]uint {
+	result := make(map[uint][]uint, len(userIDs))
+	for _, userID := range userIDs {
+		result[userID] = []uint{userID}
+	}
+	if len(userIDs) == 0 {
+		return result
+	}
+	var rows []struct {
+		ID     uint
+		UserID uint
+	}
+	if err := db.Model(&models.Player{}).
+		Select("id, user_id").
+		Where("user_id IN ?", userIDs).
+		Find(&rows).Error; err != nil {
+		return result
+	}
+	for _, row := range rows {
+		if row.ID == 0 || row.UserID == 0 {
+			continue
+		}
+		if !uintSliceContains(result[row.UserID], row.ID) {
+			result[row.UserID] = append(result[row.UserID], row.ID)
+		}
+	}
+	return result
+}
+
+func uintSliceContains(values []uint, target uint) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func calculateScoreFromUser(user *models.User) float64 {
-	// 基于体测数据计算评分
-	score := 75.0
-	if user.Sprint30m > 0 {
-		// 30米冲刺越快分数越高
-		score += (5.5 - user.Sprint30m) * 10
-	}
-	if user.StandingLongJump > 0 {
-		// 立定跳远越远分数越高
-		score += (user.StandingLongJump - 180) / 5
-	}
-	if user.PushUp > 0 {
-		// 俯卧撑越多分数越高
-		score += float64(user.PushUp - 10) * 0.5
-	}
-	// 限制在 60-95 范围
-	if score < 60 {
-		score = 60
-	}
-	if score > 95 {
-		score = 95
-	}
-	return math.Round(score*10) / 10
+	return utils.CalculatePlayerMapScore(utils.PlayerScoreInput{User: user}).Score
 }
 
 func calculateMapPercentile(value float64, min, max float64) int {
 	if value <= 0 {
-		return 50
+		return 0
 	}
 	if value <= min {
 		return 30
@@ -528,27 +562,178 @@ func calculateMapPercentile(value float64, min, max float64) int {
 	return int(30 + (value-min)/(max-min)*65)
 }
 
+func calculateLowerBetterMapPercentile(value float64, best, worst float64) int {
+	if value <= 0 {
+		return 0
+	}
+	if value <= best {
+		return 95
+	}
+	if value >= worst {
+		return 30
+	}
+	return int(95 - (value-best)/(worst-best)*65)
+}
+
+func buildMapRadarFromUser(user *models.User) gin.H {
+	dimensions := []string{}
+	values := []float64{}
+
+	if user.Sprint30m > 0 {
+		dimensions = append(dimensions, "速度")
+		values = append(values, mapScoreLowerIsBetter(user.Sprint30m, 4.2, 6.5))
+	}
+	if user.StandingLongJump > 0 {
+		dimensions = append(dimensions, "爆发")
+		values = append(values, mapScoreHigherIsBetter(user.StandingLongJump, 120, 260))
+	}
+	if user.PushUp > 0 {
+		dimensions = append(dimensions, "力量")
+		values = append(values, mapScoreHigherIsBetter(float64(user.PushUp), 8, 45))
+	}
+
+	return gin.H{
+		"visible":    len(dimensions) > 0,
+		"dimensions": dimensions,
+		"values":     values,
+	}
+}
+
+func buildMapRadarFromScore(score utils.PlayerScoreResult) gin.H {
+	dimensions := make([]string, 0, len(score.Metrics))
+	values := make([]float64, 0, len(score.Metrics))
+	for _, metric := range score.Metrics {
+		dimensions = append(dimensions, metric.Label)
+		values = append(values, metric.Score)
+		if len(dimensions) >= 6 {
+			break
+		}
+	}
+	return gin.H{
+		"visible":    len(dimensions) > 0,
+		"dimensions": dimensions,
+		"values":     values,
+	}
+}
+
+func buildMapPhysicalItemsFromScore(score utils.PlayerScoreResult) gin.H {
+	items := make([]gin.H, 0, len(score.Metrics))
+	for _, metric := range score.Metrics {
+		items = append(items, gin.H{
+			"name":       metric.Label,
+			"value":      metric.Value,
+			"percentile": int(math.Round(metric.Score)),
+		})
+	}
+	return gin.H{
+		"visible": len(items) > 0,
+		"items":   items,
+	}
+}
+
+func buildMapPhysicalItemsFromUser(user *models.User) gin.H {
+	items := []gin.H{}
+	if user.Sprint30m > 0 {
+		items = append(items, gin.H{
+			"name":       "30m冲刺",
+			"value":      fmt.Sprintf("%.1fs", user.Sprint30m),
+			"percentile": calculateLowerBetterMapPercentile(user.Sprint30m, 4.2, 6.5),
+		})
+	}
+	if user.StandingLongJump > 0 {
+		items = append(items, gin.H{
+			"name":       "立定跳远",
+			"value":      fmt.Sprintf("%.0fcm", user.StandingLongJump),
+			"percentile": calculateMapPercentile(user.StandingLongJump, 120, 260),
+		})
+	}
+	if user.PushUp > 0 {
+		items = append(items, gin.H{
+			"name":       "俯卧撑",
+			"value":      fmt.Sprintf("%d个", user.PushUp),
+			"percentile": calculateMapPercentile(float64(user.PushUp), 8, 45),
+		})
+	}
+
+	return gin.H{
+		"visible": len(items) > 0,
+		"items":   items,
+	}
+}
+
+func mapScoreLowerIsBetter(value, best, worst float64) float64 {
+	return roundMapScore(((worst - value) / (worst - best)) * 100)
+}
+
+func mapScoreHigherIsBetter(value, worst, best float64) float64 {
+	return roundMapScore(((value - worst) / (best - worst)) * 100)
+}
+
+func roundMapScore(score float64) float64 {
+	if score < 0 {
+		score = 0
+	}
+	if score > 100 {
+		score = 100
+	}
+	return math.Round(score*10) / 10
+}
+
+func buildMapProfileReports(db *gorm.DB, playerID uint) []gin.H {
+	reportPlayerIDs := reportPlayerIDsByUserID(db, []uint{playerID})[playerID]
+	if len(reportPlayerIDs) == 0 {
+		reportPlayerIDs = []uint{playerID}
+	}
+	var reports []models.ScoutReport
+	db.Preload("Scout.User").
+		Where("player_id IN ? AND status IN ?", reportPlayerIDs, []string{"published", "adopted"}).
+		Order("published_at DESC, created_at DESC").
+		Limit(3).
+		Find(&reports)
+
+	items := make([]gin.H, 0, len(reports))
+	for _, report := range reports {
+		author := "球探报告"
+		if report.Scout != nil && report.Scout.User != nil {
+			author = report.Scout.User.Name
+			if author == "" {
+				author = report.Scout.User.Nickname
+			}
+		}
+		if author == "" {
+			author = "球探报告"
+		}
+		items = append(items, gin.H{
+			"id":      report.ID,
+			"type":    "scout",
+			"author":  author,
+			"score":   report.OverallRating,
+			"summary": report.Summary,
+		})
+	}
+	return items
+}
+
 func buildMapTimeline(experiences []gin.H) []gin.H {
 	if len(experiences) == 0 {
-		return []gin.H{
-			{"date": fmt.Sprintf("%d", time.Now().Year()-1) + "-01", "type": "experience", "title": "开始踢球", "summary": "加入青训"},
-		}
+		return []gin.H{}
 	}
 	return experiences
 }
 
 // DashboardStats 数据看板统计响应
 type DashboardStats struct {
-	TotalPlayers      int64       `json:"totalPlayers"`
-	TotalProvinces    int64       `json:"totalProvinces"`
-	AvgAge            float64     `json:"avgAge"`
-	AvgScore          float64     `json:"avgScore"`
-	MonthlyNew        int64       `json:"monthlyNew"`
-	RegionDistribution []gin.H    `json:"regionDistribution"`
-	AgeDistribution    []gin.H    `json:"ageDistribution"`
-	PositionDistribution []gin.H  `json:"positionDistribution"`
-	ScoreRanking       []gin.H    `json:"scoreRanking"`
-	GrowthTrend        []gin.H    `json:"growthTrend"`
+	TotalPlayers         int64   `json:"totalPlayers"`
+	ScoredPlayerCount    int64   `json:"scoredPlayerCount"`
+	TotalProvinces       int64   `json:"totalProvinces"`
+	AvgAge               float64 `json:"avgAge"`
+	AvgScore             float64 `json:"avgScore"`
+	MonthlyNew           int64   `json:"monthlyNew"`
+	RegionDistribution   []gin.H `json:"regionDistribution"`
+	AgeDistribution      []gin.H `json:"ageDistribution"`
+	PositionDistribution []gin.H `json:"positionDistribution"`
+	ScoreRanking         []gin.H `json:"scoreRanking"`
+	GrowthTrend          []gin.H `json:"growthTrend"`
 }
 
 // GetDashboardStats 获取数据看板统计
@@ -566,6 +751,7 @@ func (ctrl *MapController) GetDashboardStats(c *gin.Context) {
 	provinceMap := make(map[string]bool)
 	var totalAge int64
 	var totalScore float64
+	var scoredPlayers int64
 	var monthlyNew int64
 	now := time.Now()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
@@ -576,6 +762,7 @@ func (ctrl *MapController) GetDashboardStats(c *gin.Context) {
 	positionMap := make(map[string]int64)
 	scoreLevelMap := make(map[string]int64)
 	growthMap := make(map[string]int64)
+	scoreIndex := buildTraceablePlayerScoreIndex(db, users)
 
 	for _, u := range users {
 		totalPlayers++
@@ -584,8 +771,11 @@ func (ctrl *MapController) GetDashboardStats(c *gin.Context) {
 			regionMap[u.Province]++
 		}
 		totalAge += int64(u.Age)
-		score := calculateRandomScore(60, 95)
-		totalScore += score
+		scoreDetail := scoreIndex[u.ID]
+		if scoreDetail.HasScore {
+			totalScore += scoreDetail.Score
+			scoredPlayers++
+		}
 
 		if u.CreatedAt.After(monthStart) || u.CreatedAt.Equal(monthStart) {
 			monthlyNew++
@@ -603,7 +793,7 @@ func (ctrl *MapController) GetDashboardStats(c *gin.Context) {
 		positionMap[pos]++
 
 		// 评分等级分布
-		level := calculatePotential(score)
+		level := scoreDetail.Potential
 		scoreLevelMap[level]++
 
 		// 成长趋势（按注册月份）
@@ -649,7 +839,7 @@ func (ctrl *MapController) GetDashboardStats(c *gin.Context) {
 
 	// 评分排名（按等级）
 	var scoreRank []gin.H
-	for _, level := range []string{"S", "A", "B", "C", "D"} {
+	for _, level := range []string{"S", "A", "B", "C", "D", "待评估"} {
 		scoreRank = append(scoreRank, gin.H{"name": level + "级", "value": scoreLevelMap[level]})
 	}
 
@@ -669,11 +859,14 @@ func (ctrl *MapController) GetDashboardStats(c *gin.Context) {
 	avgScore := 0.0
 	if totalPlayers > 0 {
 		avgAge = math.Round(float64(totalAge)/float64(totalPlayers)*10) / 10
-		avgScore = math.Round(totalScore/float64(totalPlayers)*10) / 10
+	}
+	if scoredPlayers > 0 {
+		avgScore = math.Round(totalScore/float64(scoredPlayers)*10) / 10
 	}
 
 	stats := DashboardStats{
 		TotalPlayers:         totalPlayers,
+		ScoredPlayerCount:    scoredPlayers,
 		TotalProvinces:       int64(len(provinceMap)),
 		AvgAge:               avgAge,
 		AvgScore:             avgScore,
@@ -702,25 +895,25 @@ func (ctrl *MapController) GetOverseasPlayers(c *gin.Context) {
 	}
 
 	var players []gin.H
+	scoreIndex := buildTraceablePlayerScoreIndex(db, users)
 	for _, u := range users {
-		score := calculateRandomScore(65, 98)
-		potential := calculatePotential(score)
-		tags := generateTags(u.Position)
+		scoreDetail := scoreIndex[u.ID]
 		country := u.Country
 		if country == "" {
 			country = "海外"
 		}
 		players = append(players, gin.H{
-			"id":        u.ID,
-			"name":      u.Name,
-			"avatar":    u.Avatar,
-			"country":   country,
-			"city":      u.City,
-			"position":  u.Position,
-			"age":       u.Age,
-			"score":     score,
-			"potential": potential,
-			"tags":      tags,
+			"id":             u.ID,
+			"name":           u.Name,
+			"avatar":         u.Avatar,
+			"country":        country,
+			"city":           u.City,
+			"position":       u.Position,
+			"age":            u.Age,
+			"score":          scoreDetail.Score,
+			"potential":      scoreDetail.Potential,
+			"tags":           utils.BuildPlayerTags(&u, 4),
+			"scoreBreakdown": scoreDetail,
 		})
 	}
 
@@ -743,53 +936,43 @@ func (ctrl *MapController) GetMyRank(c *gin.Context) {
 		return
 	}
 
-	// 全省排名（按年龄分组内的评分）
+	scoreDetail := buildTraceablePlayerScore(db, &me)
+
+	// 全省排名（同年龄组，按可追溯评分排序）
 	var provinceRank int64 = 1
 	if me.Province != "" {
-		var provinceCount int64
-		db.Model(&models.User{}).
-			Where("role = ? AND status = ? AND province = ? AND age = ? AND score > ?", "user", "active", me.Province, me.Age, 0).
-			Count(&provinceCount)
-		// 简单模拟：实际应基于真实评分字段排序
-		if provinceCount > 0 {
-			provinceRank = int64(me.ID)%provinceCount + 1
-		}
+		var peers []models.User
+		db.Where("role = ? AND status = ? AND province = ? AND age = ?", "user", "active", me.Province, me.Age).Find(&peers)
+		provinceRank = rankPlayerInScope(db, peers, me.ID)
 	}
 
 	// 全市排名
 	var cityRank int64 = 1
 	if me.City != "" {
-		var cityCount int64
-		db.Model(&models.User{}).
-			Where("role = ? AND status = ? AND province = ? AND city = ? AND age = ?", "user", "active", me.Province, me.City, me.Age).
-			Count(&cityCount)
-		if cityCount > 0 {
-			cityRank = int64(me.ID)%cityCount + 1
-		}
+		var peers []models.User
+		db.Where("role = ? AND status = ? AND province = ? AND city = ? AND age = ?", "user", "active", me.Province, me.City, me.Age).Find(&peers)
+		cityRank = rankPlayerInScope(db, peers, me.ID)
 	}
 
 	// 全国同位置排名
 	var positionRank int64 = 1
 	if me.Position != "" {
-		var positionCount int64
-		db.Model(&models.User{}).
-			Where("role = ? AND status = ? AND position = ? AND age = ?", "user", "active", me.Position, me.Age).
-			Count(&positionCount)
-		if positionCount > 0 {
-			positionRank = int64(me.ID)%positionCount + 1
-		}
+		var peers []models.User
+		db.Where("role = ? AND status = ? AND position = ? AND age = ?", "user", "active", me.Position, me.Age).Find(&peers)
+		positionRank = rankPlayerInScope(db, peers, me.ID)
 	}
 
-	score := calculateRandomScore(60, 95)
 	utils.Success(c, "", gin.H{
 		"player": gin.H{
-			"id":       me.ID,
-			"name":     me.Name,
-			"province": me.Province,
-			"city":     me.City,
-			"position": me.Position,
-			"age":      me.Age,
-			"score":    score,
+			"id":             me.ID,
+			"name":           me.Name,
+			"province":       me.Province,
+			"city":           me.City,
+			"position":       me.Position,
+			"age":            me.Age,
+			"score":          scoreDetail.Score,
+			"potential":      scoreDetail.Potential,
+			"scoreBreakdown": scoreDetail,
 		},
 		"ranks": gin.H{
 			"provinceRank": provinceRank,
@@ -801,17 +984,18 @@ func (ctrl *MapController) GetMyRank(c *gin.Context) {
 
 // RecommendPlayer 推荐球员数据
 type RecommendPlayer struct {
-	ID           uint     `json:"id"`
-	Name         string   `json:"name"`
-	Avatar       string   `json:"avatar"`
-	Position     string   `json:"position"`
-	Age          int      `json:"age"`
-	City         string   `json:"city"`
-	Province     string   `json:"province"`
-	Score        float64  `json:"score"`
-	Potential    string   `json:"potential"`
-	Tags         []string `json:"tags"`
-	Reason       string   `json:"reason"`
+	ID             uint                    `json:"id"`
+	Name           string                  `json:"name"`
+	Avatar         string                  `json:"avatar"`
+	Position       string                  `json:"position"`
+	Age            int                     `json:"age"`
+	City           string                  `json:"city"`
+	Province       string                  `json:"province"`
+	Score          float64                 `json:"score"`
+	Potential      string                  `json:"potential"`
+	Tags           []string                `json:"tags"`
+	Reason         string                  `json:"reason"`
+	ScoreBreakdown utils.PlayerScoreResult `json:"scoreBreakdown"`
 }
 
 // GetRecommendations 智能推荐「猜你感兴趣」（支持未登录匿名访问）
@@ -846,58 +1030,42 @@ func (ctrl *MapController) GetRecommendations(c *gin.Context) {
 
 	// 评分和标签预处理
 	type scored struct {
-		user   models.User
-		score  float64
-		reason string
+		user      models.User
+		score     utils.PlayerScoreResult
+		rankScore float64
 	}
 	scoredList := make([]scored, 0, len(candidates))
+	scoreIndex := buildTraceablePlayerScoreIndex(db, candidates)
 	for _, u := range candidates {
-		s := calculateRandomScore(60, 95)
-		scoredList = append(scoredList, scored{user: u, score: s})
+		scoreDetail := scoreIndex[u.ID]
+		scoredList = append(scoredList, scored{
+			user:      u,
+			score:     scoreDetail,
+			rankScore: recommendationRankScore(u, scoreDetail, me, isPlayer, userId > 0),
+		})
 	}
 
 	// 推荐排序逻辑
 	var recommendations []RecommendPlayer
 	maxResults := 6
 
-	if isPlayer && me.ID > 0 {
-		// 球员视角：同位置 + 同城/同省 + 评分相近优先
-		sort.Slice(scoredList, func(i, j int) bool {
-			si := 0
-			sj := 0
-			if scoredList[i].user.Position == me.Position { si += 100 }
-			if scoredList[j].user.Position == me.Position { sj += 100 }
-			if scoredList[i].user.City == me.City && me.City != "" { si += 50 }
-			if scoredList[j].user.City == me.City && me.City != "" { sj += 50 }
-			if scoredList[i].user.Province == me.Province && me.Province != "" { si += 30 }
-			if scoredList[j].user.Province == me.Province && me.Province != "" { sj += 30 }
-			// 评分接近加分
-			ageDiffI := abs(scoredList[i].user.Age - me.Age)
-			ageDiffJ := abs(scoredList[j].user.Age - me.Age)
-			si -= ageDiffI * 5
-			sj -= ageDiffJ * 5
-			si += int(scoredList[i].score)
-			sj += int(scoredList[j].score)
-			return si > sj
-		})
-	} else if userId > 0 {
-		// B端视角：优先高评分、高潜力
-		sort.Slice(scoredList, func(i, j int) bool {
-			return scoredList[i].score > scoredList[j].score
-		})
-	} else {
-		// 未登录：随机混排热门+潜力
-		rand.Shuffle(len(scoredList), func(i, j int) {
-			scoredList[i], scoredList[j] = scoredList[j], scoredList[i]
-		})
-	}
+	sort.SliceStable(scoredList, func(i, j int) bool {
+		if scoredList[i].rankScore != scoredList[j].rankScore {
+			return scoredList[i].rankScore > scoredList[j].rankScore
+		}
+		if scoredList[i].score.Score != scoredList[j].score.Score {
+			return scoredList[i].score.Score > scoredList[j].score.Score
+		}
+		if scoredList[i].user.UpdatedAt.Equal(scoredList[j].user.UpdatedAt) {
+			return scoredList[i].user.ID < scoredList[j].user.ID
+		}
+		return scoredList[i].user.UpdatedAt.After(scoredList[j].user.UpdatedAt)
+	})
 
 	for i := 0; i < len(scoredList) && len(recommendations) < maxResults; i++ {
 		u := scoredList[i].user
-		score := scoredList[i].score
-		potential := calculatePotential(score)
-		tags := generateTags(u.Position)
-		reason := "潜力新星"
+		scoreDetail := scoredList[i].score
+		reason := scoreReason(scoreDetail)
 		if isPlayer && me.ID > 0 {
 			if u.Position == me.Position && u.City == me.City && me.City != "" {
 				reason = "同城同位置热门"
@@ -911,33 +1079,31 @@ func (ctrl *MapController) GetRecommendations(c *gin.Context) {
 				reason = "同位置推荐"
 			}
 		} else if userId > 0 {
-			if score >= 85 {
-				reason = "高评分热门"
-			} else if potential == "A" || potential == "S" {
+			if scoreDetail.Score >= 85 {
+				reason = scoreReason(scoreDetail)
+			} else if scoreDetail.Potential == "A" || scoreDetail.Potential == "S" {
 				reason = "高潜力球员"
 			}
 		} else {
-			// 未登录匿名推荐
-			if score >= 85 {
-				reason = "平台热门"
-			} else if potential == "A" || potential == "S" {
+			if scoreDetail.Score >= 85 {
+				reason = scoreReason(scoreDetail)
+			} else if scoreDetail.Potential == "A" || scoreDetail.Potential == "S" {
 				reason = "高潜力新星"
-			} else {
-				reason = "值得关注"
 			}
 		}
 		recommendations = append(recommendations, RecommendPlayer{
-			ID:        u.ID,
-			Name:      u.Name,
-			Avatar:    u.Avatar,
-			Position:  u.Position,
-			Age:       u.Age,
-			City:      u.City,
-			Province:  u.Province,
-			Score:     score,
-			Potential: potential,
-			Tags:      tags,
-			Reason:    reason,
+			ID:             u.ID,
+			Name:           u.Name,
+			Avatar:         u.Avatar,
+			Position:       u.Position,
+			Age:            u.Age,
+			City:           u.City,
+			Province:       u.Province,
+			Score:          scoreDetail.Score,
+			Potential:      scoreDetail.Potential,
+			Tags:           utils.BuildPlayerTags(&u, 4),
+			Reason:         reason,
+			ScoreBreakdown: scoreDetail,
 		})
 	}
 
@@ -951,11 +1117,94 @@ func abs(a int) int {
 	return a
 }
 
+func rankPlayerInScope(db *gorm.DB, players []models.User, targetID uint) int64 {
+	if len(players) == 0 {
+		return 1
+	}
+	scoreIndex := buildTraceablePlayerScoreIndex(db, players)
+	sort.SliceStable(players, func(i, j int) bool {
+		left := scoreIndex[players[i].ID]
+		right := scoreIndex[players[j].ID]
+		if left.HasScore != right.HasScore {
+			return left.HasScore
+		}
+		if left.Score != right.Score {
+			return left.Score > right.Score
+		}
+		if players[i].UpdatedAt.Equal(players[j].UpdatedAt) {
+			return players[i].ID < players[j].ID
+		}
+		return players[i].UpdatedAt.After(players[j].UpdatedAt)
+	})
+	for i, player := range players {
+		if player.ID == targetID {
+			return int64(i + 1)
+		}
+	}
+	return 1
+}
+
+func recommendationRankScore(candidate models.User, score utils.PlayerScoreResult, me models.User, isPlayer bool, isLoggedIn bool) float64 {
+	rank := score.Score
+	if !score.HasScore {
+		rank = 0
+	}
+	if isPlayer && me.ID > 0 {
+		if candidate.Position == me.Position && me.Position != "" {
+			rank += 25
+		}
+		if candidate.City == me.City && me.City != "" {
+			rank += 18
+		}
+		if candidate.Province == me.Province && me.Province != "" {
+			rank += 10
+		}
+		rank -= float64(abs(candidate.Age-me.Age)) * 2
+		return rank
+	}
+	if isLoggedIn {
+		if score.HasScore {
+			return rank + float64(score.DataCoverage)*0.1
+		}
+		return rank
+	}
+	if score.HasScore {
+		return rank
+	}
+	return float64(candidate.UpdatedAt.Unix()%1000) / 1000
+}
+
+func scoreReason(score utils.PlayerScoreResult) string {
+	if !score.HasScore {
+		return "资料待补充"
+	}
+	hasPhysical := false
+	hasScout := false
+	for _, source := range score.Sources {
+		if source == "latest_physical_test" {
+			hasPhysical = true
+		}
+		if source == "published_scout_reports" {
+			hasScout = true
+		}
+	}
+	switch {
+	case hasPhysical && hasScout:
+		return "体测与球探报告综合靠前"
+	case hasPhysical:
+		return "近期体测表现靠前"
+	case hasScout:
+		return "球探报告评分靠前"
+	default:
+		return "真实资料评分靠前"
+	}
+}
+
 // GetRisingStars 获取本周新星
 func (ctrl *MapController) GetRisingStars(c *gin.Context) {
 	db := config.GetDB()
 
-	// 取最近7天注册或更新的活跃球员，按ID随机模拟潜力排序
+	// 取最近7天注册或更新的活跃球员，按真实评分与最近活跃时间排序
 	var users []models.User
 	sevenDaysAgo := time.Now().AddDate(0, 0, -7)
 	if err := db.Where("role = ? AND status = ? AND (created_at >= ? OR updated_at >= ?)", "user", "active", sevenDaysAgo, sevenDaysAgo).
@@ -966,11 +1215,11 @@ func (ctrl *MapController) GetRisingStars(c *gin.Context) {
 		return
 	}
 
-	// 如果数量不足，补充一些历史高评分球员
+	// 如果数量不足，补充历史球员，仍按真实评分排序
 	if len(users) < 5 {
 		var extraUsers []models.User
 		db.Where("role = ? AND status = ?", "user", "active").
-			Order("age ASC").
+			Order("updated_at DESC, created_at DESC").
 			Limit(10).
 			Find(&extraUsers)
 		users = append(users, extraUsers...)
@@ -986,6 +1235,22 @@ func (ctrl *MapController) GetRisingStars(c *gin.Context) {
 		}
 	}
 
+	scoreIndex := buildTraceablePlayerScoreIndex(db, uniqueUsers)
+	sort.SliceStable(uniqueUsers, func(i, j int) bool {
+		left := scoreIndex[uniqueUsers[i].ID]
+		right := scoreIndex[uniqueUsers[j].ID]
+		if left.HasScore != right.HasScore {
+			return left.HasScore
+		}
+		if left.Score != right.Score {
+			return left.Score > right.Score
+		}
+		if uniqueUsers[i].UpdatedAt.Equal(uniqueUsers[j].UpdatedAt) {
+			return uniqueUsers[i].ID < uniqueUsers[j].ID
+		}
+		return uniqueUsers[i].UpdatedAt.After(uniqueUsers[j].UpdatedAt)
+	})
+
 	// 取前8位
 	if len(uniqueUsers) > 8 {
 		uniqueUsers = uniqueUsers[:8]
@@ -993,21 +1258,20 @@ func (ctrl *MapController) GetRisingStars(c *gin.Context) {
 
 	var players []gin.H
 	for _, u := range uniqueUsers {
-		score := calculateRandomScore(70, 95)
-		potential := calculatePotential(score)
-		tags := generateTags(u.Position)
+		scoreDetail := scoreIndex[u.ID]
 		players = append(players, gin.H{
-			"id":        u.ID,
-			"name":      u.Name,
-			"avatar":    u.Avatar,
-			"province":  u.Province,
-			"city":      u.City,
-			"position":  u.Position,
-			"age":       u.Age,
-			"score":     score,
-			"potential": potential,
-			"tags":      tags,
-			"reason":    "本周活跃新星",
+			"id":             u.ID,
+			"name":           u.Name,
+			"avatar":         u.Avatar,
+			"province":       u.Province,
+			"city":           u.City,
+			"position":       u.Position,
+			"age":            u.Age,
+			"score":          scoreDetail.Score,
+			"potential":      scoreDetail.Potential,
+			"tags":           utils.BuildPlayerTags(&u, 4),
+			"reason":         scoreReason(scoreDetail),
+			"scoreBreakdown": scoreDetail,
 		})
 	}
 
@@ -1032,11 +1296,11 @@ func (ctrl *MapController) ExportCompare(c *gin.Context) {
 	}
 
 	var csvBuilder strings.Builder
-	csvBuilder.WriteString("\uFEFF姓名,年龄,位置,城市,俱乐部,综合评分,潜力\n")
+	csvBuilder.WriteString("\uFEFF姓名,年龄,位置,城市,俱乐部,综合评分,潜力,评分来源\n")
+	scoreIndex := buildTraceablePlayerScoreIndex(db, users)
 	for _, u := range users {
-		score := calculateRandomScore(60, 95)
-		potential := calculatePotential(score)
-		csvBuilder.WriteString(fmt.Sprintf("%s,%d,%s,%s,%s,%.1f,%s\n", u.Name, u.Age, u.Position, u.City, u.Club, score, potential))
+		scoreDetail := scoreIndex[u.ID]
+		csvBuilder.WriteString(fmt.Sprintf("%s,%d,%s,%s,%s,%.1f,%s,%s\n", u.Name, u.Age, u.Position, u.City, u.Club, scoreDetail.Score, scoreDetail.Potential, strings.Join(scoreDetail.Sources, "+")))
 	}
 
 	c.Header("Content-Type", "text/csv; charset=utf-8")

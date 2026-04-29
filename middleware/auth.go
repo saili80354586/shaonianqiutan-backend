@@ -64,6 +64,49 @@ func AuthMiddleware() gin.HandlerFunc {
 	return authMiddleware(false)
 }
 
+// OptionalAuthMiddleware 有 token 时写入用户上下文，无 token 时允许继续访问公开接口。
+func OptionalAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.Next()
+			return
+		}
+
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "认证令牌格式错误"})
+			c.Abort()
+			return
+		}
+
+		claims, err := ParseToken(parts[1])
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "认证令牌无效或已过期"})
+			c.Abort()
+			return
+		}
+
+		userRepo := models.NewUserRepository(config.GetDB())
+		user, err := userRepo.FindByID(claims.UserID)
+		if err != nil || user == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "用户不存在或已被删除"})
+			c.Abort()
+			return
+		}
+		if user.Status != models.StatusActive {
+			c.JSON(http.StatusForbidden, gin.H{"error": "账号未激活或已被禁用"})
+			c.Abort()
+			return
+		}
+
+		c.Set("userId", claims.UserID)
+		c.Set("phone", claims.Phone)
+		c.Set("user", user)
+		c.Next()
+	}
+}
+
 // QueryTokenAuthMiddleware JWT认证中间件（兼容 WebSocket query token）
 func QueryTokenAuthMiddleware() gin.HandlerFunc {
 	return authMiddleware(true)
@@ -139,6 +182,74 @@ func AdminRoleMiddleware() gin.HandlerFunc {
 
 		c.Set("adminId", user.ID)
 		c.Next()
+	}
+}
+
+// ScoutRoleMiddleware 球探角色权限中间件
+func ScoutRoleMiddleware() gin.HandlerFunc {
+	return requireActiveRole(models.RoleScout, "您没有球探权限")
+}
+
+// CoachRoleMiddleware 教练角色权限中间件
+func CoachRoleMiddleware() gin.HandlerFunc {
+	return requireActiveRole(models.RoleCoach, "您没有教练权限")
+}
+
+func requireActiveRole(role models.UserRole, message string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userValue, exists := c.Get("user")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "未认证"})
+			c.Abort()
+			return
+		}
+
+		user, ok := userValue.(*models.User)
+		if !ok || user == nil || user.Status != models.StatusActive {
+			c.JSON(http.StatusForbidden, gin.H{"error": message})
+			c.Abort()
+			return
+		}
+
+		hasRole, err := userHasActiveRole(user, role)
+		if err != nil || !hasRole {
+			c.JSON(http.StatusForbidden, gin.H{"error": message})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+func userHasActiveRole(user *models.User, role models.UserRole) (bool, error) {
+	if user.Role == role {
+		return true, nil
+	}
+
+	db := config.GetDB()
+	var count int64
+	switch role {
+	case models.RoleScout:
+		if err := db.Model(&models.Scout{}).Where("user_id = ?", user.ID).Count(&count).Error; err != nil {
+			return false, err
+		}
+		return count > 0, nil
+	case models.RoleCoach:
+		if err := db.Model(&models.ClubCoach{}).Where("user_id = ? AND status = ?", user.ID, models.ClubCoachStatusActive).Count(&count).Error; err != nil {
+			return false, err
+		}
+		if count > 0 {
+			return true, nil
+		}
+
+		count = 0
+		if err := db.Model(&models.TeamCoach{}).Where("user_id = ? AND status = ?", user.ID, "active").Count(&count).Error; err != nil {
+			return false, err
+		}
+		return count > 0, nil
+	default:
+		return false, nil
 	}
 }
 

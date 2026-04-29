@@ -1,8 +1,9 @@
 package repositories
 
 import (
-	"gorm.io/gorm"
+	"github.com/shaonianqiutan/backend/models"
 	"github.com/shaonianqiutan/backend/utils"
+	"gorm.io/gorm"
 )
 
 // EntityLayer 实体图层类型
@@ -46,36 +47,36 @@ func (l EntityLayer) IsValid() bool {
 
 // NationalAggregate 全国聚合（统一格式）
 type NationalAggregate struct {
-	ProvinceCode          string            `json:"provinceCode"`
-	ProvinceName          string            `json:"provinceName"`
-	Count                 int64             `json:"count"`
-	PlayerCount           int64             `json:"playerCount,omitempty"`
-	ClubCount             int64             `json:"clubCount,omitempty"`
-	CoachCount            int64             `json:"coachCount,omitempty"`
-	AnalystCount          int64             `json:"analystCount,omitempty"`
-	ScoutCount            int64             `json:"scoutCount,omitempty"`
-	HeatLevel             int               `json:"heatLevel"`
-	SizeDistribution      map[string]int64  `json:"sizeDistribution,omitempty"`      // P2-14: 俱乐部规模分布
-	LicenseDistribution   map[string]int64  `json:"licenseDistribution,omitempty"`   // P2-15: 教练执照分布
-	SpecialtyDistribution map[string]int64  `json:"specialtyDistribution,omitempty"` // P2-16: 分析师擅长领域
-	AdoptionRate          float64           `json:"adoptionRate,omitempty"`          // P2-17: 球探采纳率
+	ProvinceCode          string           `json:"provinceCode"`
+	ProvinceName          string           `json:"provinceName"`
+	Count                 int64            `json:"count"`
+	PlayerCount           int64            `json:"playerCount,omitempty"`
+	ClubCount             int64            `json:"clubCount,omitempty"`
+	CoachCount            int64            `json:"coachCount,omitempty"`
+	AnalystCount          int64            `json:"analystCount,omitempty"`
+	ScoutCount            int64            `json:"scoutCount,omitempty"`
+	HeatLevel             int              `json:"heatLevel"`
+	SizeDistribution      map[string]int64 `json:"sizeDistribution,omitempty"`      // P2-14: 俱乐部规模分布
+	LicenseDistribution   map[string]int64 `json:"licenseDistribution,omitempty"`   // P2-15: 教练执照分布
+	SpecialtyDistribution map[string]int64 `json:"specialtyDistribution,omitempty"` // P2-16: 分析师擅长领域
+	AdoptionRate          float64          `json:"adoptionRate,omitempty"`          // P2-17: 球探采纳率
 }
 
 // ProvincialAggregate 省市聚合
 type ProvincialAggregate struct {
-	CityCode              string            `json:"cityCode"`
-	CityName              string            `json:"cityName"`
-	Count                 int64             `json:"count"`
-	PlayerCount           int64             `json:"playerCount,omitempty"`
-	ClubCount             int64             `json:"clubCount,omitempty"`
-	CoachCount            int64             `json:"coachCount,omitempty"`
-	AnalystCount          int64             `json:"analystCount,omitempty"`
-	ScoutCount            int64             `json:"scoutCount,omitempty"`
-	HeatLevel             int               `json:"heatLevel"`
-	SizeDistribution      map[string]int64  `json:"sizeDistribution,omitempty"`      // P2-14
-	LicenseDistribution   map[string]int64  `json:"licenseDistribution,omitempty"`   // P2-15
-	SpecialtyDistribution map[string]int64  `json:"specialtyDistribution,omitempty"` // P2-16
-	AdoptionRate          float64           `json:"adoptionRate,omitempty"`          // P2-17
+	CityCode              string           `json:"cityCode"`
+	CityName              string           `json:"cityName"`
+	Count                 int64            `json:"count"`
+	PlayerCount           int64            `json:"playerCount,omitempty"`
+	ClubCount             int64            `json:"clubCount,omitempty"`
+	CoachCount            int64            `json:"coachCount,omitempty"`
+	AnalystCount          int64            `json:"analystCount,omitempty"`
+	ScoutCount            int64            `json:"scoutCount,omitempty"`
+	HeatLevel             int              `json:"heatLevel"`
+	SizeDistribution      map[string]int64 `json:"sizeDistribution,omitempty"`      // P2-14
+	LicenseDistribution   map[string]int64 `json:"licenseDistribution,omitempty"`   // P2-15
+	SpecialtyDistribution map[string]int64 `json:"specialtyDistribution,omitempty"` // P2-16
+	AdoptionRate          float64          `json:"adoptionRate,omitempty"`          // P2-17
 }
 
 // CityEntityItem 城市散点项
@@ -109,11 +110,11 @@ func (r *MultiLayerMapRepository) GetNationalAggregates(layer EntityLayer) ([]Na
 		return r.queryNationalAll()
 	}
 	sqlMap := map[EntityLayer]string{
-		LayerPlayers: `SELECT province as p, COUNT(*) as c FROM users WHERE role='user' AND status='active' AND province!='' GROUP BY province`,
-		LayerClubs:   `SELECT province as p, COUNT(*) as c FROM clubs WHERE province!='' AND deleted_at IS NULL GROUP BY province`,
-		LayerCoaches: `SELECT u.province as p, COUNT(*) as c FROM coaches c JOIN users u ON c.user_id=u.id WHERE u.province!='' AND c.deleted_at IS NULL AND u.deleted_at IS NULL GROUP BY u.province`,
-		LayerAnalysts:`SELECT u.province as p, COUNT(*) as c FROM analysts a JOIN users u ON a.user_id=u.id WHERE u.province!='' AND a.deleted_at IS NULL AND u.deleted_at IS NULL GROUP BY u.province`,
-		LayerScouts:  `SELECT u.province as p, COUNT(*) as c FROM scouts s JOIN users u ON s.user_id=u.id WHERE u.province!='' AND s.deleted_at IS NULL AND u.deleted_at IS NULL GROUP BY u.province`,
+		LayerPlayers:  `SELECT province as p, COUNT(*) as c FROM users WHERE role='user' AND status='active' AND province!='' GROUP BY province`,
+		LayerClubs:    `SELECT province as p, COUNT(*) as c FROM clubs WHERE province!='' AND deleted_at IS NULL GROUP BY province`,
+		LayerCoaches:  `SELECT u.province as p, COUNT(*) as c FROM coaches c JOIN users u ON c.user_id=u.id WHERE u.province!='' AND c.deleted_at IS NULL AND u.deleted_at IS NULL GROUP BY u.province`,
+		LayerAnalysts: `SELECT u.province as p, COUNT(*) as c FROM analysts a JOIN users u ON a.user_id=u.id WHERE u.province!='' AND a.deleted_at IS NULL AND u.deleted_at IS NULL GROUP BY u.province`,
+		LayerScouts:   `SELECT u.province as p, COUNT(*) as c FROM scouts s JOIN users u ON s.user_id=u.id WHERE u.province!='' AND s.deleted_at IS NULL AND u.deleted_at IS NULL GROUP BY u.province`,
 	}
 	aggregates, err := r.queryNational(sqlMap[layer])
 	if err != nil {
@@ -134,7 +135,10 @@ func (r *MultiLayerMapRepository) GetNationalAggregates(layer EntityLayer) ([]Na
 }
 
 func (r *MultiLayerMapRepository) queryNational(sql string) ([]NationalAggregate, error) {
-	var rows []struct{ P string; C int64 }
+	var rows []struct {
+		P string
+		C int64
+	}
 	if err := r.db.Raw(sql).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -234,7 +238,10 @@ func (r *MultiLayerMapRepository) GetProvincialAggregates(province string, layer
 }
 
 func (r *MultiLayerMapRepository) queryProvincial(sql, province string) ([]ProvincialAggregate, error) {
-	var rows []struct{ C string; N int64 }
+	var rows []struct {
+		C string
+		N int64
+	}
 	if sql == "" {
 		return []ProvincialAggregate{}, nil
 	}
@@ -326,25 +333,153 @@ func (r *MultiLayerMapRepository) GetCityEntities(province, city string, layer E
 }
 
 func (r *MultiLayerMapRepository) getCityPlayers(prov, city string) ([]CityEntityItem, error) {
-	var rows []struct {
-		ID uint; Name string; Avatar string; Position string; Age int; Club string
+	var rows []models.User
+	err := r.db.Where("role = ? AND status = ? AND province = ? AND city = ?", "user", "active", prov, city).Limit(200).Find(&rows).Error
+	if err != nil {
+		return nil, err
 	}
-	err := r.db.Raw(`SELECT id, name, avatar, position, age, club FROM users WHERE role='user' AND status='active' AND province=? AND city=? LIMIT 200`, prov, city).Scan(&rows).Error
-	if err != nil { return nil, err }
+	scoreIndex := r.buildCityPlayerScoreIndex(rows)
 	items := make([]CityEntityItem, 0, len(rows))
 	for _, v := range rows {
 		nx, ny := utils.GenerateNormalizedCoordinates(v.ID)
-		items = append(items, CityEntityItem{ID: v.ID, Name: v.Name, Avatar: v.Avatar, Type: "player", Tags: utils.GenerateTags(v.Position), NormalizedX: nx, NormalizedY: ny, Extra: map[string]interface{}{"position": v.Position, "age": v.Age, "club": v.Club}})
+		score := scoreIndex[v.ID]
+		items = append(items, CityEntityItem{ID: v.ID, Name: v.Name, Avatar: v.Avatar, Type: "player", Score: score.Score, Tags: utils.BuildPlayerTags(&v, 4), NormalizedX: nx, NormalizedY: ny, Extra: map[string]interface{}{"position": v.Position, "age": v.Age, "club": v.Club, "potential": score.Potential, "scoreBreakdown": score}})
 	}
 	return items, nil
 }
 
+func (r *MultiLayerMapRepository) buildCityPlayerScoreIndex(users []models.User) map[uint]utils.PlayerScoreResult {
+	result := make(map[uint]utils.PlayerScoreResult, len(users))
+	if len(users) == 0 {
+		return result
+	}
+	playerIDs := make([]uint, 0, len(users))
+	for _, user := range users {
+		playerIDs = append(playerIDs, user.ID)
+	}
+
+	physicalRecords := make(map[uint]*models.PhysicalTestRecord, len(playerIDs))
+	var records []models.PhysicalTestRecord
+	if err := r.db.Where("player_id IN ?", playerIDs).
+		Order("player_id ASC, test_date DESC, created_at DESC, id DESC").
+		Find(&records).Error; err == nil {
+		for _, record := range records {
+			if _, ok := physicalRecords[record.PlayerID]; ok {
+				continue
+			}
+			recordCopy := record
+			physicalRecords[record.PlayerID] = &recordCopy
+		}
+	}
+
+	reportPlayerIDsByUser := r.reportPlayerIDsByUserID(playerIDs)
+	reportPlayerToUser := make(map[uint]uint, len(playerIDs)*2)
+	reportPlayerIDs := make([]uint, 0, len(playerIDs)*2)
+	for _, userID := range playerIDs {
+		for _, reportPlayerID := range reportPlayerIDsByUser[userID] {
+			reportPlayerToUser[reportPlayerID] = userID
+			reportPlayerIDs = append(reportPlayerIDs, reportPlayerID)
+		}
+	}
+
+	reportScores := make(map[uint]struct {
+		Average float64
+		Count   int64
+	}, len(playerIDs))
+	var reportRows []struct {
+		PlayerID uint
+		Average  float64
+		Count    int64
+	}
+	if err := r.db.Model(&models.ScoutReport{}).
+		Select("player_id, AVG(overall_rating) AS average, COUNT(*) AS count").
+		Where("player_id IN ? AND status IN ? AND overall_rating > ?", reportPlayerIDs, []string{"published", "adopted"}, 0).
+		Group("player_id").
+		Scan(&reportRows).Error; err == nil {
+		for _, row := range reportRows {
+			userID := reportPlayerToUser[row.PlayerID]
+			if userID == 0 {
+				continue
+			}
+			current := reportScores[userID]
+			total := current.Average*float64(current.Count) + row.Average*float64(row.Count)
+			current.Count += row.Count
+			current.Average = total / float64(current.Count)
+			reportScores[userID] = struct {
+				Average float64
+				Count   int64
+			}{Average: current.Average, Count: current.Count}
+		}
+	}
+
+	for i := range users {
+		user := users[i]
+		reportScore := reportScores[user.ID]
+		var average *float64
+		if reportScore.Count > 0 {
+			avg := reportScore.Average
+			average = &avg
+		}
+		result[user.ID] = utils.CalculatePlayerMapScore(utils.PlayerScoreInput{
+			User:               &user,
+			PhysicalRecord:     physicalRecords[user.ID],
+			ScoutReportAverage: average,
+			ScoutReportCount:   reportScore.Count,
+		})
+	}
+	return result
+}
+
+func (r *MultiLayerMapRepository) reportPlayerIDsByUserID(userIDs []uint) map[uint][]uint {
+	result := make(map[uint][]uint, len(userIDs))
+	for _, userID := range userIDs {
+		result[userID] = []uint{userID}
+	}
+	if len(userIDs) == 0 {
+		return result
+	}
+	var rows []struct {
+		ID     uint
+		UserID uint
+	}
+	if err := r.db.Model(&models.Player{}).
+		Select("id, user_id").
+		Where("user_id IN ?", userIDs).
+		Find(&rows).Error; err != nil {
+		return result
+	}
+	for _, row := range rows {
+		if row.ID == 0 || row.UserID == 0 {
+			continue
+		}
+		if !containsUint(result[row.UserID], row.ID) {
+			result[row.UserID] = append(result[row.UserID], row.ID)
+		}
+	}
+	return result
+}
+
+func containsUint(values []uint, target uint) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *MultiLayerMapRepository) getCityClubs(prov, city string) ([]CityEntityItem, error) {
 	var rows []struct {
-		ID uint; Name string; Logo string; Address string; ClubSize string
+		ID       uint
+		Name     string
+		Logo     string
+		Address  string
+		ClubSize string
 	}
 	err := r.db.Raw(`SELECT id, name, logo, address, club_size FROM clubs WHERE province=? AND city=? AND deleted_at IS NULL LIMIT 200`, prov, city).Scan(&rows).Error
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	items := make([]CityEntityItem, 0, len(rows))
 	for _, v := range rows {
 		nx, ny := utils.GenerateNormalizedCoordinates(v.ID + 10000)
@@ -355,10 +490,19 @@ func (r *MultiLayerMapRepository) getCityClubs(prov, city string) ([]CityEntityI
 
 func (r *MultiLayerMapRepository) getCityCoaches(prov, city string) ([]CityEntityItem, error) {
 	var rows []struct {
-		ID uint; UserID uint; Name string; Avatar string; Position string; LicenseType string; CoachingYears int; CurrentClub string
+		ID            uint
+		UserID        uint
+		Name          string
+		Avatar        string
+		Position      string
+		LicenseType   string
+		CoachingYears int
+		CurrentClub   string
 	}
 	err := r.db.Raw(`SELECT c.id, c.user_id, u.name, u.avatar, u.position, c.license_type, c.coaching_years, c.current_club FROM coaches c JOIN users u ON c.user_id=u.id WHERE u.province=? AND u.city=? AND c.deleted_at IS NULL AND u.deleted_at IS NULL LIMIT 200`, prov, city).Scan(&rows).Error
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	items := make([]CityEntityItem, 0, len(rows))
 	for _, v := range rows {
 		nx, ny := utils.GenerateNormalizedCoordinates(v.ID + 20000)
@@ -373,10 +517,18 @@ func (r *MultiLayerMapRepository) getCityCoaches(prov, city string) ([]CityEntit
 
 func (r *MultiLayerMapRepository) getCityAnalysts(prov, city string) ([]CityEntityItem, error) {
 	var rows []struct {
-		ID uint; UserID uint; Name string; Avatar string; Specialty string; Experience int; Rating float64
+		ID         uint
+		UserID     uint
+		Name       string
+		Avatar     string
+		Specialty  string
+		Experience int
+		Rating     float64
 	}
 	err := r.db.Raw(`SELECT a.id, a.user_id, u.name, u.avatar, a.specialty, a.experience, a.rating FROM analysts a JOIN users u ON a.user_id=u.id WHERE u.province=? AND u.city=? AND a.deleted_at IS NULL AND u.deleted_at IS NULL LIMIT 200`, prov, city).Scan(&rows).Error
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	items := make([]CityEntityItem, 0, len(rows))
 	for _, v := range rows {
 		nx, ny := utils.GenerateNormalizedCoordinates(v.ID + 30000)
@@ -387,10 +539,18 @@ func (r *MultiLayerMapRepository) getCityAnalysts(prov, city string) ([]CityEnti
 
 func (r *MultiLayerMapRepository) getCityScouts(prov, city string) ([]CityEntityItem, error) {
 	var rows []struct {
-		ID uint; UserID uint; Name string; Avatar string; ScoutingExperience string; CurrentOrganization string; TotalDiscovered int
+		ID                  uint
+		UserID              uint
+		Name                string
+		Avatar              string
+		ScoutingExperience  string
+		CurrentOrganization string
+		TotalDiscovered     int
 	}
 	err := r.db.Raw(`SELECT s.id, s.user_id, u.name, u.avatar, s.scouting_experience, s.current_organization, s.total_discovered FROM scouts s JOIN users u ON s.user_id=u.id WHERE u.province=? AND u.city=? AND s.deleted_at IS NULL AND u.deleted_at IS NULL LIMIT 200`, prov, city).Scan(&rows).Error
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	items := make([]CityEntityItem, 0, len(rows))
 	for _, v := range rows {
 		nx, ny := utils.GenerateNormalizedCoordinates(v.ID + 40000)
@@ -401,11 +561,21 @@ func (r *MultiLayerMapRepository) getCityScouts(prov, city string) ([]CityEntity
 
 func (r *MultiLayerMapRepository) getCityAll(prov, city string) ([]CityEntityItem, error) {
 	var all []CityEntityItem
-	if a, _ := r.getCityPlayers(prov, city); len(a) > 0 { all = append(all, a...) }
-	if a, _ := r.getCityClubs(prov, city); len(a) > 0 { all = append(all, a...) }
-	if a, _ := r.getCityCoaches(prov, city); len(a) > 0 { all = append(all, a...) }
-	if a, _ := r.getCityAnalysts(prov, city); len(a) > 0 { all = append(all, a...) }
-	if a, _ := r.getCityScouts(prov, city); len(a) > 0 { all = append(all, a...) }
+	if a, _ := r.getCityPlayers(prov, city); len(a) > 0 {
+		all = append(all, a...)
+	}
+	if a, _ := r.getCityClubs(prov, city); len(a) > 0 {
+		all = append(all, a...)
+	}
+	if a, _ := r.getCityCoaches(prov, city); len(a) > 0 {
+		all = append(all, a...)
+	}
+	if a, _ := r.getCityAnalysts(prov, city); len(a) > 0 {
+		all = append(all, a...)
+	}
+	if a, _ := r.getCityScouts(prov, city); len(a) > 0 {
+		all = append(all, a...)
+	}
 	return all, nil
 }
 
