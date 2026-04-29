@@ -110,7 +110,7 @@ type activityRegistrationRequest struct {
 
 var (
 	activityMobilePattern = regexp.MustCompile(`1[3-9]\d{9}`)
-	activityLinkPattern   = regexp.MustCompile(`(?i)(https?://|www\.|[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+\b)`)
+	activityLinkPattern   = regexp.MustCompile(`(?i)(https?://|www\.|[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*\.[a-z]{2,}\b)`)
 	activityQRKeywords    = []string{"微信二维码", "二维码", "扫码", "扫一扫", "微信码"}
 )
 
