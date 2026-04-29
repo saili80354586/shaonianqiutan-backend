@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -555,16 +556,84 @@ func (c *PhysicalTestController) GeneratePhysicalTestReports(ctx *gin.Context) {
 		PlayerIDs []uint `json:"playerIds"`
 	}
 
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		// 生成全部球员的报告
+	if err := ctx.ShouldBindJSON(&req); err != nil || len(req.PlayerIDs) == 0 {
 		req.PlayerIDs = test.GetPlayerIDs()
 	}
 
-	// TODO: 实现真实的报告生成逻辑
+	playerSet := make(map[uint]struct{}, len(req.PlayerIDs))
+	for _, playerID := range req.PlayerIDs {
+		playerSet[playerID] = struct{}{}
+	}
+
+	records, err := c.ptService.GetPhysicalTestRecords(uint(testID), nil)
+	if err != nil {
+		utils.ServerError(ctx, "获取体测记录失败")
+		return
+	}
+
+	reportService := services.NewPhysicalTestReportService(c.ptService.GetDB())
+	generated := 0
+	failed := 0
+	for _, record := range records {
+		if _, ok := playerSet[record.PlayerID]; !ok {
+			continue
+		}
+		if getRecordStatus(&record) != "completed" {
+			failed++
+			continue
+		}
+
+		reportData, err := reportService.GenerateReport(&record)
+		if err != nil {
+			failed++
+			continue
+		}
+		reportJSON, err := json.Marshal(reportData)
+		if err != nil {
+			failed++
+			continue
+		}
+
+		updates := map[string]interface{}{
+			"player_id":   record.PlayerID,
+			"club_id":     club.ID,
+			"activity_id": record.ActivityID,
+			"report_data": string(reportJSON),
+		}
+
+		var existing models.PhysicalTestReport
+		if err := c.ptService.GetDB().Where("record_id = ?", record.ID).First(&existing).Error; err == nil {
+			if err := c.ptService.GetDB().Model(&existing).Updates(updates).Error; err != nil {
+				failed++
+				continue
+			}
+		} else {
+			report := models.PhysicalTestReport{
+				RecordID:   record.ID,
+				PlayerID:   record.PlayerID,
+				ClubID:     club.ID,
+				ActivityID: record.ActivityID,
+				ReportData: string(reportJSON),
+				ShareToken: fmt.Sprintf("physical-%d-%d", record.ID, time.Now().UnixNano()),
+			}
+			if err := c.ptService.GetDB().Create(&report).Error; err != nil {
+				failed++
+				continue
+			}
+		}
+		generated++
+	}
+
+	if generated > 0 {
+		_ = c.ptService.UpdatePhysicalTest(uint(testID), map[string]interface{}{
+			"status": models.PTStatusReported,
+		})
+	}
+
 	utils.SuccessResponseWithMessage(ctx, gin.H{
 		"total":     len(req.PlayerIDs),
-		"generated": len(req.PlayerIDs),
-		"failed":    0,
+		"generated": generated,
+		"failed":    failed,
 	}, "报告生成完成")
 }
 

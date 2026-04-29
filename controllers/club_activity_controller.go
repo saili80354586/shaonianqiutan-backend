@@ -16,7 +16,7 @@ import (
 
 // ClubActivityController 俱乐部活动控制器
 type ClubActivityController struct {
-	db                *gorm.DB
+	db                  *gorm.DB
 	notificationService *services.NotificationService
 }
 
@@ -37,6 +37,37 @@ func mapActivityType(t string) string {
 	default:
 		return "trial"
 	}
+}
+
+func applyActivityTimeRange(ctx *gin.Context, db *gorm.DB, defaultDays int) *gorm.DB {
+	startAfter := ctx.Query("startAfter")
+	startBefore := ctx.Query("startBefore")
+	days := ctx.Query("days")
+	if days == "" && ctx.Query("timeRange") == "future30" {
+		days = "30"
+	}
+	if days == "" && startAfter == "" && startBefore == "" && defaultDays > 0 {
+		days = strconv.Itoa(defaultDays)
+	}
+
+	if days != "" {
+		if n, err := strconv.Atoi(days); err == nil && n > 0 {
+			now := time.Now()
+			return db.Where("start_time >= ? AND start_time < ?", now, now.AddDate(0, 0, n))
+		}
+	}
+
+	if startAfter != "" {
+		if t, err := time.ParseInLocation("2006-01-02", startAfter, time.Local); err == nil {
+			db = db.Where("start_time >= ?", t)
+		}
+	}
+	if startBefore != "" {
+		if t, err := time.ParseInLocation("2006-01-02", startBefore, time.Local); err == nil {
+			db = db.Where("start_time < ?", t.AddDate(0, 0, 1))
+		}
+	}
+	return db
 }
 
 // 常见城市经纬度映射
@@ -61,6 +92,19 @@ var provinceNames = []string{
 	"江苏", "浙江", "安徽", "福建", "江西", "山东", "河南", "湖北", "湖南",
 	"广东", "海南", "四川", "贵州", "云南", "陕西", "甘肃", "青海", "台湾",
 	"内蒙古", "广西", "西藏", "宁夏", "新疆", "香港", "澳门",
+}
+
+var activeActivityRegistrationStatuses = []string{"pending", "confirmed", "checked_in"}
+
+type activityRegistrationRequest struct {
+	Name           string `json:"name"`
+	Phone          string `json:"phone"`
+	Wechat         string `json:"wechat"`
+	Remark         string `json:"remark"`
+	PlayerName     string `json:"player_name"`
+	PlayerAge      int    `json:"player_age"`
+	PlayerPosition string `json:"player_position"`
+	ContactPhone   string `json:"contact_phone"`
 }
 
 // 从 location 中解析 province / city / address
@@ -147,10 +191,10 @@ func (c *ClubActivityController) ListActivities(ctx *gin.Context) {
 		return
 	}
 
-	activityType := ctx.Query("type")             // external, internal, 空表示全部
-	status := ctx.Query("status")                 // upcoming, ongoing, ended, 空表示全部
-	isReview := ctx.Query("isReview")             // true, false
-	publishStatus := ctx.Query("publishStatus")   // draft, published, unpublished
+	activityType := ctx.Query("type")           // external, internal, 空表示全部
+	status := ctx.Query("status")               // upcoming, ongoing, ended, 空表示全部
+	isReview := ctx.Query("isReview")           // true, false
+	publishStatus := ctx.Query("publishStatus") // draft, published, unpublished
 
 	db := c.db.Where("club_id = ?", clubID)
 	if activityType != "" {
@@ -163,7 +207,9 @@ func (c *ClubActivityController) ListActivities(ctx *gin.Context) {
 		db = db.Where("is_review = ? AND status = ?", true, "ended")
 	}
 	if publishStatus != "" {
-		db = db.Where("publish_status = ?", publishStatus)
+		if publishStatus != "all" {
+			db = db.Where("publish_status = ?", publishStatus)
+		}
 	} else {
 		// 默认只显示已发布的活动
 		db = db.Where("publish_status = ?", "published")
@@ -178,7 +224,7 @@ func (c *ClubActivityController) ListActivities(ctx *gin.Context) {
 	result := make([]map[string]interface{}, 0, len(activities))
 	for _, a := range activities {
 		regCount := int64(0)
-		c.db.Model(&models.ClubActivityRegistration{}).Where("activity_id = ? AND status != ?", a.ID, "cancelled").Count(&regCount)
+		c.db.Model(&models.ClubActivityRegistration{}).Where("activity_id = ? AND status IN ?", a.ID, activeActivityRegistrationStatuses).Count(&regCount)
 		result = append(result, map[string]interface{}{
 			"id":              a.ID,
 			"title":           a.Title,
@@ -195,6 +241,7 @@ func (c *ClubActivityController) ListActivities(ctx *gin.Context) {
 			"isReview":        a.IsReview,
 			"reviewContent":   a.ReviewContent,
 			"reviewImages":    a.GetReviewImagesArray(),
+			"publishStatus":   a.PublishStatus,
 			"regCount":        regCount,
 		})
 	}
@@ -222,6 +269,7 @@ func (c *ClubActivityController) CreateActivity(ctx *gin.Context) {
 		MaxParticipants int      `json:"maxParticipants"`
 		ContactPhone    string   `json:"contactPhone"`
 		ContactWechat   string   `json:"contactWechat"`
+		PublishStatus   string   `json:"publishStatus"`
 		IsReview        bool     `json:"isReview"`
 		ReviewContent   string   `json:"reviewContent"`
 		ReviewImages    []string `json:"reviewImages"`
@@ -239,6 +287,9 @@ func (c *ClubActivityController) CreateActivity(ctx *gin.Context) {
 	}
 	if end.IsZero() {
 		end, _ = time.ParseInLocation("2006-01-02 15:04", req.EndTime, time.Local)
+	}
+	if req.PublishStatus == "" {
+		req.PublishStatus = "published"
 	}
 
 	status := "upcoming"
@@ -263,6 +314,7 @@ func (c *ClubActivityController) CreateActivity(ctx *gin.Context) {
 		MaxParticipants: req.MaxParticipants,
 		ContactPhone:    req.ContactPhone,
 		ContactWechat:   req.ContactWechat,
+		PublishStatus:   req.PublishStatus,
 		Status:          status,
 		IsReview:        req.IsReview,
 		ReviewContent:   req.ReviewContent,
@@ -309,6 +361,7 @@ func (c *ClubActivityController) UpdateActivity(ctx *gin.Context) {
 		MaxParticipants int      `json:"maxParticipants"`
 		ContactPhone    string   `json:"contactPhone"`
 		ContactWechat   string   `json:"contactWechat"`
+		PublishStatus   string   `json:"publishStatus"`
 		IsReview        bool     `json:"isReview"`
 		ReviewContent   string   `json:"reviewContent"`
 		ReviewImages    []string `json:"reviewImages"`
@@ -331,6 +384,9 @@ func (c *ClubActivityController) UpdateActivity(ctx *gin.Context) {
 	activity.MaxParticipants = req.MaxParticipants
 	activity.ContactPhone = req.ContactPhone
 	activity.ContactWechat = req.ContactWechat
+	if req.PublishStatus != "" {
+		activity.PublishStatus = req.PublishStatus
+	}
 	activity.IsReview = req.IsReview
 	activity.ReviewContent = req.ReviewContent
 	activity.SetReviewImagesArray(req.ReviewImages)
@@ -398,20 +454,46 @@ func (c *ClubActivityController) DeleteActivity(ctx *gin.Context) {
 // RegisterActivity 报名活动
 func (c *ClubActivityController) RegisterActivity(ctx *gin.Context) {
 	clubIDStr := ctx.Param("clubId")
-	_, err := strconv.ParseUint(clubIDStr, 10, 32)
+	clubIDValue, err := strconv.ParseUint(clubIDStr, 10, 32)
 	if err != nil {
 		utils.ValidationError(ctx, "无效的俱乐部ID")
 		return
 	}
 	activityIDStr := ctx.Param("id")
-	activityID, err := strconv.ParseUint(activityIDStr, 10, 32)
+	activityIDValue, err := strconv.ParseUint(activityIDStr, 10, 32)
 	if err != nil {
 		utils.ValidationError(ctx, "无效的活动ID")
 		return
 	}
 
+	clubID := uint(clubIDValue)
+	c.registerActivity(ctx, uint(activityIDValue), &clubID)
+}
+
+// RegisterPublicActivity 通过全局活动路径报名
+func (c *ClubActivityController) RegisterPublicActivity(ctx *gin.Context) {
+	activityIDStr := ctx.Param("id")
+	activityIDValue, err := strconv.ParseUint(activityIDStr, 10, 32)
+	if err != nil {
+		utils.ValidationError(ctx, "无效的活动ID")
+		return
+	}
+
+	c.registerActivity(ctx, uint(activityIDValue), nil)
+}
+
+func (c *ClubActivityController) registerActivity(ctx *gin.Context, activityID uint, clubID *uint) {
 	var activity models.ClubActivity
-	if err := c.db.First(&activity, activityID).Error; err != nil {
+	db := c.db.Where("id = ?", activityID)
+	if clubID != nil {
+		db = db.Where("club_id = ?", *clubID)
+	}
+	if err := db.First(&activity).Error; err != nil {
+		utils.NotFoundError(ctx, "活动不存在")
+		return
+	}
+
+	if activity.PublishStatus != "published" {
 		utils.NotFoundError(ctx, "活动不存在")
 		return
 	}
@@ -421,17 +503,7 @@ func (c *ClubActivityController) RegisterActivity(ctx *gin.Context) {
 		return
 	}
 
-	var req struct {
-		Name           string `json:"name"`
-		Phone          string `json:"phone"`
-		Wechat         string `json:"wechat"`
-		Remark         string `json:"remark"`
-		PlayerName     string `json:"player_name"`
-		PlayerAge      int    `json:"player_age"`
-		PlayerPosition string `json:"player_position"`
-		ContactPhone   string `json:"contact_phone"`
-	}
-
+	var req activityRegistrationRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.ValidationError(ctx, "参数错误")
 		return
@@ -450,6 +522,10 @@ func (c *ClubActivityController) RegisterActivity(ctx *gin.Context) {
 		utils.ValidationError(ctx, "请填写球员姓名")
 		return
 	}
+	if phone == "" {
+		utils.ValidationError(ctx, "请填写联系电话")
+		return
+	}
 	if req.Remark == "" && req.PlayerPosition != "" {
 		req.Remark = "位置：" + req.PlayerPosition
 		if req.PlayerAge > 0 {
@@ -460,7 +536,7 @@ func (c *ClubActivityController) RegisterActivity(ctx *gin.Context) {
 	// 检查报名人数
 	if activity.MaxParticipants > 0 {
 		var count int64
-		c.db.Model(&models.ClubActivityRegistration{}).Where("activity_id = ? AND status != ?", activityID, "cancelled").Count(&count)
+		c.db.Model(&models.ClubActivityRegistration{}).Where("activity_id = ? AND status IN ?", activity.ID, activeActivityRegistrationStatuses).Count(&count)
 		if int(count) >= activity.MaxParticipants {
 			utils.ValidationError(ctx, "报名人数已满")
 			return
@@ -472,9 +548,21 @@ func (c *ClubActivityController) RegisterActivity(ctx *gin.Context) {
 		id := uid.(uint)
 		userID = &id
 	}
+	if userID != nil {
+		var existing models.ClubActivityRegistration
+		err := c.db.Where("activity_id = ? AND user_id = ? AND status IN ?", activity.ID, *userID, activeActivityRegistrationStatuses).First(&existing).Error
+		if err == nil {
+			utils.ValidationError(ctx, "你已报名该活动，请勿重复报名")
+			return
+		}
+		if err != nil && err != gorm.ErrRecordNotFound {
+			utils.ServerError(ctx, "报名状态检查失败")
+			return
+		}
+	}
 
 	reg := models.ClubActivityRegistration{
-		ActivityID: uint(activityID),
+		ActivityID: activity.ID,
 		UserID:     userID,
 		Name:       name,
 		Phone:      phone,
@@ -687,6 +775,10 @@ func (c *ClubActivityController) ExportRegistrations(ctx *gin.Context) {
 		statusLabel := "待审核"
 		if r.Status == "confirmed" {
 			statusLabel = "已通过"
+		} else if r.Status == "rejected" {
+			statusLabel = "已拒绝"
+		} else if r.Status == "checked_in" {
+			statusLabel = "已签到"
 		} else if r.Status == "cancelled" {
 			statusLabel = "已取消"
 		}
@@ -721,9 +813,10 @@ func (c *ClubActivityController) ListPublicActivities(ctx *gin.Context) {
 	if city != "" {
 		db = db.Where("location LIKE ?", "%"+city+"%")
 	}
+	db = applyActivityTimeRange(ctx, db, 0)
 
 	var activities []models.ClubActivity
-	if err := db.Order("start_time DESC").Find(&activities).Error; err != nil {
+	if err := db.Order("start_time ASC").Find(&activities).Error; err != nil {
 		utils.ServerError(ctx, "查询失败")
 		return
 	}
@@ -731,7 +824,7 @@ func (c *ClubActivityController) ListPublicActivities(ctx *gin.Context) {
 	result := make([]map[string]interface{}, 0, len(activities))
 	for _, a := range activities {
 		regCount := int64(0)
-		c.db.Model(&models.ClubActivityRegistration{}).Where("activity_id = ? AND status != ?", a.ID, "cancelled").Count(&regCount)
+		c.db.Model(&models.ClubActivityRegistration{}).Where("activity_id = ? AND status IN ?", a.ID, activeActivityRegistrationStatuses).Count(&regCount)
 		prov, cit, addr := parseLocation(a.Location)
 		clubName := ""
 		clubLogo := ""
@@ -793,7 +886,7 @@ func (c *ClubActivityController) GetPublicActivity(ctx *gin.Context) {
 	}
 
 	regCount := int64(0)
-	c.db.Model(&models.ClubActivityRegistration{}).Where("activity_id = ? AND status != ?", activity.ID, "cancelled").Count(&regCount)
+	c.db.Model(&models.ClubActivityRegistration{}).Where("activity_id = ? AND status IN ?", activity.ID, activeActivityRegistrationStatuses).Count(&regCount)
 	prov, cit, addr := parseLocation(activity.Location)
 	clubName := ""
 	clubLogo := ""
@@ -837,18 +930,21 @@ func (c *ClubActivityController) GetPublicActivity(ctx *gin.Context) {
 // GetActivitiesMap 获取活动地图数据（按城市聚合）
 func (c *ClubActivityController) GetActivitiesMap(ctx *gin.Context) {
 	var activities []models.ClubActivity
-	if err := c.db.Where("publish_status = ? AND status IN ?", "published", []string{"upcoming", "ongoing"}).Find(&activities).Error; err != nil {
+	db := c.db.Where("publish_status = ? AND status IN ?", "published", []string{"upcoming", "ongoing"})
+	db = applyActivityTimeRange(ctx, db, 30)
+	if err := db.Order("start_time ASC").Find(&activities).Error; err != nil {
 		utils.ServerError(ctx, "查询失败")
 		return
 	}
 
 	// 按城市分组
 	type cityGroup struct {
-		province   string
-		city       string
-		lat        float64
-		lng        float64
-		activities []map[string]interface{}
+		province     string
+		city         string
+		lat          float64
+		lng          float64
+		activityType string
+		activities   []map[string]interface{}
 	}
 	groups := make(map[string]*cityGroup)
 
@@ -859,7 +955,7 @@ func (c *ClubActivityController) GetActivitiesMap(ctx *gin.Context) {
 			cit = a.Location
 		}
 		if _, ok := groups[cit]; !ok {
-			groups[cit] = &cityGroup{province: prov, city: cit, lat: lat, lng: lng}
+			groups[cit] = &cityGroup{province: prov, city: cit, lat: lat, lng: lng, activityType: mapActivityType(a.Type)}
 		}
 		groups[cit].activities = append(groups[cit].activities, map[string]interface{}{
 			"id":        a.ID,
@@ -874,6 +970,7 @@ func (c *ClubActivityController) GetActivitiesMap(ctx *gin.Context) {
 		result = append(result, map[string]interface{}{
 			"province":   g.province,
 			"city":       strings.TrimSuffix(g.city, "市"),
+			"type":       g.activityType,
 			"lat":        g.lat,
 			"lng":        g.lng,
 			"count":      len(g.activities),
@@ -887,28 +984,58 @@ func (c *ClubActivityController) GetActivitiesMap(ctx *gin.Context) {
 // CancelRegistration 取消报名
 func (c *ClubActivityController) CancelRegistration(ctx *gin.Context) {
 	clubIDStr := ctx.Param("clubId")
-	_, err := strconv.ParseUint(clubIDStr, 10, 32)
+	clubIDValue, err := strconv.ParseUint(clubIDStr, 10, 32)
 	if err != nil {
 		utils.ValidationError(ctx, "无效的俱乐部ID")
 		return
 	}
 	activityIDStr := ctx.Param("id")
-	activityID, err := strconv.ParseUint(activityIDStr, 10, 32)
+	activityIDValue, err := strconv.ParseUint(activityIDStr, 10, 32)
 	if err != nil {
 		utils.ValidationError(ctx, "无效的活动ID")
 		return
 	}
 
+	clubID := uint(clubIDValue)
+	c.cancelRegistration(ctx, uint(activityIDValue), &clubID)
+}
+
+// CancelPublicRegistration 通过全局活动路径取消报名
+func (c *ClubActivityController) CancelPublicRegistration(ctx *gin.Context) {
+	activityIDStr := ctx.Param("id")
+	activityIDValue, err := strconv.ParseUint(activityIDStr, 10, 32)
+	if err != nil {
+		utils.ValidationError(ctx, "无效的活动ID")
+		return
+	}
+
+	c.cancelRegistration(ctx, uint(activityIDValue), nil)
+}
+
+func (c *ClubActivityController) cancelRegistration(ctx *gin.Context, activityID uint, clubID *uint) {
 	userID := ctx.GetUint("userId")
 	if userID == 0 {
 		utils.ValidationError(ctx, "请先登录")
 		return
 	}
 
-	if err := c.db.Model(&models.ClubActivityRegistration{}).
-		Where("activity_id = ? AND user_id = ?", activityID, userID).
-		Update("status", "cancelled").Error; err != nil {
+	if clubID != nil {
+		var activity models.ClubActivity
+		if err := c.db.Where("id = ? AND club_id = ?", activityID, *clubID).First(&activity).Error; err != nil {
+			utils.NotFoundError(ctx, "活动不存在")
+			return
+		}
+	}
+
+	result := c.db.Model(&models.ClubActivityRegistration{}).
+		Where("activity_id = ? AND user_id = ? AND status IN ?", activityID, userID, activeActivityRegistrationStatuses).
+		Update("status", "cancelled")
+	if result.Error != nil {
 		utils.ServerError(ctx, "取消报名失败")
+		return
+	}
+	if result.RowsAffected == 0 {
+		utils.ValidationError(ctx, "未找到可取消的报名")
 		return
 	}
 
@@ -940,17 +1067,37 @@ func (c *ClubActivityController) GetMyRegistrations(ctx *gin.Context) {
 	for _, r := range regs {
 		var activity models.ClubActivity
 		c.db.First(&activity, r.ActivityID)
+		clubName := ""
+		clubLogo := ""
+		var club models.Club
+		if err := c.db.First(&club, activity.ClubID).Error; err == nil {
+			clubName = club.Name
+			clubLogo = club.Logo
+		}
 		result = append(result, map[string]interface{}{
-			"id":            r.ID,
-			"activity_id":   r.ActivityID,
-			"activityTitle": activity.Title,
-			"activityCover": activity.CoverImage,
-			"activityLocation": activity.Location,
+			"id":                r.ID,
+			"activityId":        r.ActivityID,
+			"activity_id":       r.ActivityID,
+			"clubId":            activity.ClubID,
+			"clubName":          clubName,
+			"clubLogo":          clubLogo,
+			"activityTitle":     activity.Title,
+			"activityCover":     activity.CoverImage,
+			"activityType":      activity.Type,
+			"activityStatus":    activity.Status,
+			"activityLocation":  activity.Location,
 			"activityStartTime": activity.StartTime.Format("2006-01-02 15:04"),
-			"name":          r.Name,
-			"phone":         r.Phone,
-			"status":        r.Status,
-			"created_at":    r.CreatedAt,
+			"activityEndTime":   activity.EndTime.Format("2006-01-02 15:04"),
+			"maxParticipants":   activity.MaxParticipants,
+			"contactPhone":      activity.ContactPhone,
+			"contactWechat":     activity.ContactWechat,
+			"name":              r.Name,
+			"phone":             r.Phone,
+			"wechat":            r.Wechat,
+			"remark":            r.Remark,
+			"status":            r.Status,
+			"created_at":        r.CreatedAt,
+			"createdAt":         r.CreatedAt,
 		})
 	}
 

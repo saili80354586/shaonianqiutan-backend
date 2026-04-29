@@ -35,6 +35,7 @@ func SetupClubRoutes(
 		// 球员管理
 		club.GET("/players", clubController.GetPlayers)
 		club.GET("/players/selection", clubController.GetPlayerSelection)
+		club.GET("/players/:id/physical-reports", clubController.GetPlayerPhysicalReports)
 		club.GET("/players/:id", clubController.GetPlayerDetail)
 		club.POST("/players/invite", clubController.InvitePlayer)
 		club.POST("/players/import", clubController.ImportPlayers)
@@ -46,6 +47,8 @@ func SetupClubRoutes(
 
 		// 报告导出
 		club.GET("/reports/:reportId/export", clubController.ExportReport)
+		club.GET("/physical-reports/:reportId", clubController.GetPhysicalReportDetail)
+		club.GET("/physical-reports/:reportId/export", clubController.ExportPhysicalReport)
 
 		// 筛选方案
 		club.GET("/player-filter-presets", clubController.GetPlayerFilterPresets)

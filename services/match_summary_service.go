@@ -353,6 +353,12 @@ func (s *MatchSummaryService) SubmitPlayerReview(summaryID, playerID uint, input
 		if err := s.reviewRepo.Update(existing); err != nil {
 			return nil, err
 		}
+		if summary.Status == "pending" {
+			summary.Status = "player_submitted"
+			if err := s.summaryRepo.Update(summary); err != nil {
+				return nil, err
+			}
+		}
 		return s.reviewRepo.GetByID(existing.ID)
 	}
 

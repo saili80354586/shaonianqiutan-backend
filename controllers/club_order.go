@@ -3,6 +3,7 @@ package controllers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -145,23 +146,23 @@ func (c *ClubOrderController) GetOrder(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"id":           order.ID,
-			"orderNo":      order.OrderNo,
-			"playerId":     order.PlayerID,
-			"playerName":   getPlayerName(order.Player),
-			"analystId":    order.AnalystID,
-			"analystName":  getAnalystName(order.Analyst),
-			"serviceType":  order.ServiceType,
-			"serviceName":  getServiceDisplayName(order.ServiceType),
-			"price":        order.Price,
-			"discount":     order.Discount,
-			"finalPrice":   order.FinalPrice,
-			"status":       order.Status,
-			"statusName":   getStatusDisplayName(order.Status),
-			"remark":       order.Remark,
-			"createdAt":    order.CreatedAt.Format("2006-01-02 15:04:05"),
-			"paidAt":       formatTime(order.PaidAt),
-			"completedAt":  formatTime(order.CompletedAt),
+			"id":          order.ID,
+			"orderNo":     order.OrderNo,
+			"playerId":    order.PlayerID,
+			"playerName":  getPlayerName(order.Player),
+			"analystId":   order.AnalystID,
+			"analystName": getAnalystName(order.Analyst),
+			"serviceType": order.ServiceType,
+			"serviceName": getServiceDisplayName(order.ServiceType),
+			"price":       order.Price,
+			"discount":    order.Discount,
+			"finalPrice":  order.FinalPrice,
+			"status":      order.Status,
+			"statusName":  getStatusDisplayName(order.Status),
+			"remark":      order.Remark,
+			"createdAt":   order.CreatedAt.Format("2006-01-02 15:04:05"),
+			"paidAt":      formatTime(order.PaidAt),
+			"completedAt": formatTime(order.CompletedAt),
 		},
 	})
 }
@@ -222,7 +223,15 @@ func (c *ClubOrderController) CreateBatchOrders(ctx *gin.Context) {
 
 	orders, err := c.orderService.CreateOrders(club.ID, userID, req.PlayerIDs, req.ServiceType, req.AnalystID, req.Remark, discount)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": gin.H{"code": "SERVER_ERROR", "message": "创建订单失败"}})
+		status := http.StatusInternalServerError
+		code := "SERVER_ERROR"
+		message := "创建订单失败"
+		if strings.Contains(err.Error(), "球员") || strings.Contains(err.Error(), "无效") {
+			status = http.StatusBadRequest
+			code = "VALIDATION_ERROR"
+			message = err.Error()
+		}
+		ctx.JSON(status, gin.H{"success": false, "error": gin.H{"code": code, "message": message}})
 		return
 	}
 

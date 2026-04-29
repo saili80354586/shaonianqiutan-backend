@@ -17,10 +17,10 @@ func SetupMatchSummaryRoutes(
 	matchSummaries := r.Group("/match-summaries")
 	matchSummaries.Use(middleware.AuthMiddleware())
 	{
-		matchSummaries.POST("", ctrl.Create)           // M1: 教练创建比赛
-		matchSummaries.GET("/:id", ctrl.Get)           // M3: 获取比赛详情
-		matchSummaries.PUT("/:id", ctrl.Update)        // M4: 教练更新比赛
-		matchSummaries.DELETE("/:id", ctrl.Delete)     // M5: 教练删除比赛
+		matchSummaries.POST("", ctrl.Create)       // M1: 教练创建比赛
+		matchSummaries.GET("/:id", ctrl.Get)       // M3: 获取比赛详情
+		matchSummaries.PUT("/:id", ctrl.Update)    // M4: 教练更新比赛
+		matchSummaries.DELETE("/:id", ctrl.Delete) // M5: 教练删除比赛
 
 		// 教练整体点评
 		matchSummaries.POST("/:id/coach-review", ctrl.SubmitCoachReview) // M8
@@ -40,14 +40,15 @@ func SetupMatchSummaryRoutes(
 		matchSummaries.GET("/:id/videos", videoCtrl.ListVideos)              // 获取视频列表
 
 		// ===== 球员自评 =====
-		matchSummaries.POST("/:id/player-review", reviewCtrl.SubmitReview)          // P3: 球员提交自评
-		matchSummaries.GET("/:id/player-review", reviewCtrl.GetReview)              // P2: 获取自己的自评
+		matchSummaries.POST("/:id/player-review", reviewCtrl.SubmitReview)                  // P3: 球员提交自评
+		matchSummaries.GET("/:id/player-review", reviewCtrl.GetReview)                      // P2: 获取自己的自评
 		matchSummaries.POST("/:id/coach-player-review", reviewCtrl.SubmitCoachPlayerReview) // C4: 教练对球员点评
 	}
 
 	// ===== 教练维度 =====
 	coach := r.Group("/coach")
 	coach.Use(middleware.AuthMiddleware())
+	coach.Use(middleware.CoachRoleMiddleware())
 	{
 		coach.GET("/match-summaries", ctrl.ListByCoach) // 教练的比赛列表
 	}

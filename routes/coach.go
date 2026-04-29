@@ -14,12 +14,13 @@ func SetupCoachRoutes(r *gin.RouterGroup, coachController *controllers.CoachCont
 	coaches := r.Group("/coaches")
 	{
 		coaches.GET("/public", coachController.GetCoachPublicProfileByUser) // 通过 user_id 获取教练公开主页
-		coaches.GET("/:id/public", coachController.GetCoachPublicProfile)  // 通过 coach_id 获取教练公开主页
+		coaches.GET("/:id/public", coachController.GetCoachPublicProfile)   // 通过 coach_id 获取教练公开主页
 	}
 
 	// 教练路由（需要认证）
 	coach := r.Group("/coach")
 	coach.Use(middleware.AuthMiddleware())
+	coach.Use(middleware.CoachRoleMiddleware())
 	{
 		// 教练资料
 		coach.GET("/profile", coachController.GetCoachProfile)

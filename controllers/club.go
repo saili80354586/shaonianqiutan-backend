@@ -3,6 +3,8 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
+	"net/url"
 	"os"
 	"path"
 	"sort"
@@ -16,6 +18,19 @@ import (
 	"github.com/shaonianqiutan/backend/utils"
 	"gorm.io/gorm"
 )
+
+const reportExportStrategy = "stored-pdf-or-printable-html"
+
+func setReportExportHeaders(ctx *gin.Context, format string, filename string) {
+	ctx.Header("X-Report-Export-Format", format)
+	ctx.Header("X-Report-Export-Strategy", reportExportStrategy)
+	if format == "pdf" {
+		ctx.Header("Content-Type", "application/pdf")
+	} else {
+		ctx.Header("Content-Type", "text/html; charset=utf-8")
+	}
+	ctx.Header("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(filename)))
+}
 
 // ClubController 俱乐部控制器
 type ClubController struct {
@@ -118,6 +133,15 @@ func (c *ClubController) GetClubProfile(ctx *gin.Context) {
 
 	// 获取球员数量
 	playerCount, _ := c.clubService.GetPlayerCount(club.ID)
+	var teamCount int64
+	c.db.Model(&models.Team{}).Where("club_id = ? AND status = ?", club.ID, models.TeamStatusActive).Count(&teamCount)
+	var coachCount int64
+	c.db.Model(&models.ClubCoach{}).Where("club_id = ? AND status = ?", club.ID, models.ClubCoachStatusActive).Count(&coachCount)
+	var owner models.User
+	achievements := ""
+	if err := c.db.Select("achievements").First(&owner, club.UserID).Error; err == nil {
+		achievements = owner.Achievements
+	}
 
 	utils.SuccessResponse(ctx, gin.H{
 		"id":                    club.ID,
@@ -126,6 +150,8 @@ func (c *ClubController) GetClubProfile(ctx *gin.Context) {
 		"logo":                  club.Logo,
 		"description":           club.Description,
 		"address":               club.Address,
+		"province":              club.Province,
+		"city":                  club.City,
 		"contactName":           club.ContactName,
 		"contactPhone":          club.ContactPhone,
 		"establishedYear":       club.EstablishedYear,
@@ -134,6 +160,9 @@ func (c *ClubController) GetClubProfile(ctx *gin.Context) {
 		"memberExpireDate":      utils.FormatTime(&club.MemberExpireDate),
 		"freePhysicalTestQuota": club.FreeTestQuota,
 		"playerCount":           playerCount,
+		"teamCount":             teamCount,
+		"coachCount":            coachCount,
+		"achievements":          achievements,
 		"clubRole":              "admin",
 		"createdAt":             utils.FormatDateTime(club.CreatedAt),
 	})
@@ -144,12 +173,19 @@ func (c *ClubController) UpdateClubProfile(ctx *gin.Context) {
 	userID := ctx.GetUint("userId")
 
 	var req struct {
-		Name         string `json:"name"`
-		Logo         string `json:"logo"`
-		Description  string `json:"description"`
-		Address      string `json:"address"`
-		ContactName  string `json:"contactName"`
-		ContactPhone string `json:"contactPhone"`
+		Name                  *string `json:"name"`
+		Logo                  *string `json:"logo"`
+		Description           *string `json:"description"`
+		Address               *string `json:"address"`
+		ContactName           *string `json:"contactName"`
+		ContactPhone          *string `json:"contactPhone"`
+		Province              *string `json:"province"`
+		City                  *string `json:"city"`
+		ClubSize              *string `json:"clubSize"`
+		ClubSizeLegacy        *string `json:"club_size"`
+		EstablishedYear       *int    `json:"establishedYear"`
+		EstablishedYearLegacy *int    `json:"established_year"`
+		Achievements          *string `json:"achievements"`
 	}
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -157,7 +193,28 @@ func (c *ClubController) UpdateClubProfile(ctx *gin.Context) {
 		return
 	}
 
-	club, err := c.clubService.UpdateClubProfile(userID, req.Name, req.Logo, req.Description, req.Address, req.ContactName, req.ContactPhone)
+	clubSize := req.ClubSize
+	if clubSize == nil {
+		clubSize = req.ClubSizeLegacy
+	}
+	establishedYear := req.EstablishedYear
+	if establishedYear == nil {
+		establishedYear = req.EstablishedYearLegacy
+	}
+
+	club, err := c.clubService.UpdateClubProfile(userID, services.ClubProfileUpdateInput{
+		Name:            req.Name,
+		Logo:            req.Logo,
+		Description:     req.Description,
+		Address:         req.Address,
+		ContactName:     req.ContactName,
+		ContactPhone:    req.ContactPhone,
+		Province:        req.Province,
+		City:            req.City,
+		ClubSize:        clubSize,
+		EstablishedYear: establishedYear,
+		Achievements:    req.Achievements,
+	})
 	if err != nil {
 		utils.ServerError(ctx, "更新失败")
 		return
@@ -185,6 +242,7 @@ func (c *ClubController) GetDashboard(ctx *gin.Context) {
 				"completedOrders":        0,
 				"physicalTestsThisMonth": 0,
 				"totalPhysicalTests":     0,
+				"monthlySpending":        0,
 			},
 		})
 		return
@@ -610,7 +668,19 @@ func (c *ClubController) GetPlayerDetail(ctx *gin.Context) {
 		}
 	}
 
-	// 5. 球探报告
+	// 5. 球员体测报告
+	var physicalReports []models.PhysicalTestReport
+	c.db.Preload("Activity").Preload("Record").Preload("Player").
+		Where("player_id = ? AND club_id = ?", playerUserID, club.ID).
+		Order("created_at DESC").
+		Limit(20).
+		Find(&physicalReports)
+	physicalReportList := make([]gin.H, 0, len(physicalReports))
+	for _, report := range physicalReports {
+		physicalReportList = append(physicalReportList, c.formatPhysicalReportItem(report))
+	}
+
+	// 6. 球探报告
 	var scoutReports []models.ScoutReport
 	c.db.Where("player_id = ?", playerUserID).Order("created_at DESC").Limit(20).Find(&scoutReports)
 	scoutReportList := make([]gin.H, 0, len(scoutReports))
@@ -701,18 +771,20 @@ func (c *ClubController) GetPlayerDetail(ctx *gin.Context) {
 		},
 		"lastPhysicalTest": lastPhysicalTest,
 		"statistics": gin.H{
-			"totalOrders":     orderTotal,
-			"completedOrders": completedOrders,
-			"pendingOrders":   pendingOrders,
-			"totalReports":    totalScoutReports,
-			"avgScore":        0,
+			"totalOrders":          orderTotal,
+			"completedOrders":      completedOrders,
+			"pendingOrders":        pendingOrders,
+			"totalReports":         totalScoutReports,
+			"totalPhysicalReports": len(physicalReportList),
+			"avgScore":             0,
 		},
-		"orders":         orderList,
-		"weeklyReports":  weeklyReportList,
-		"matchSummaries": matchSummaryList,
-		"physicalTests":  physicalTestList,
-		"scoutReports":   scoutReportList,
-		"growthRecords":  growthRecords,
+		"orders":          orderList,
+		"weeklyReports":   weeklyReportList,
+		"matchSummaries":  matchSummaryList,
+		"physicalTests":   physicalTestList,
+		"physicalReports": physicalReportList,
+		"scoutReports":    scoutReportList,
+		"growthRecords":   growthRecords,
 	})
 }
 
@@ -841,9 +913,9 @@ func (c *ClubController) GetAnalytics(ctx *gin.Context) {
 				"byPosition": []interface{}{},
 			},
 			"abilityRadar": gin.H{
-				"labels":      []string{"速度", "力量", "耐力", "灵敏", "柔韧", "技术"},
-				"teamAvg":     []int{70, 65, 68, 67, 63, 72},
-				"platformAvg": []int{65, 60, 63, 62, 58, 68},
+				"labels":      []string{},
+				"teamAvg":     []int{},
+				"platformAvg": []int{},
 			},
 			"topPerformers": []interface{}{},
 		})
@@ -1031,6 +1103,423 @@ func (c *ClubController) GetMatchSummaryStats(ctx *gin.Context) {
 	})
 }
 
+func (c *ClubController) resolveClubPlayerUserID(clubID uint, rawID uint) (uint, *models.User, error) {
+	var clubPlayer models.ClubPlayer
+	if err := c.db.Preload("User").
+		Where("id = ? AND club_id = ?", rawID, clubID).
+		First(&clubPlayer).Error; err == nil {
+		return clubPlayer.UserID, clubPlayer.User, nil
+	}
+
+	if err := c.db.Preload("User").
+		Where("user_id = ? AND club_id = ?", rawID, clubID).
+		First(&clubPlayer).Error; err == nil {
+		return clubPlayer.UserID, clubPlayer.User, nil
+	}
+
+	var teamPlayer models.TeamPlayer
+	if err := c.db.Preload("User").
+		Joins("JOIN teams ON teams.id = team_players.team_id").
+		Where("team_players.user_id = ? AND teams.club_id = ?", rawID, clubID).
+		First(&teamPlayer).Error; err == nil {
+		return teamPlayer.UserID, teamPlayer.User, nil
+	}
+
+	return 0, nil, gorm.ErrRecordNotFound
+}
+
+func (c *ClubController) formatPhysicalReportItem(report models.PhysicalTestReport) gin.H {
+	var reportData models.PhysicalTestReportData
+	_ = json.Unmarshal([]byte(report.ReportData), &reportData)
+
+	playerName := reportData.PlayerName
+	if playerName == "" && report.Player != nil {
+		playerName = report.Player.Name
+		if playerName == "" {
+			playerName = report.Player.Nickname
+		}
+	}
+
+	activityName := ""
+	if report.Activity != nil {
+		activityName = report.Activity.Name
+	}
+
+	testDate := reportData.TestDate
+	if testDate == "" && report.Record != nil {
+		testDate = report.Record.TestDate.Format("2006-01-02")
+	}
+
+	return gin.H{
+		"id":            report.ID,
+		"recordId":      report.RecordID,
+		"playerId":      report.PlayerID,
+		"playerName":    playerName,
+		"activityId":    report.ActivityID,
+		"activityName":  activityName,
+		"testDate":      testDate,
+		"overallRating": reportData.OverallRating,
+		"percentile":    reportData.Percentile,
+		"pdfUrl":        report.PDFURL,
+		"hasPdf":        report.PDFURL != "",
+		"shareCount":    report.ShareCount,
+		"viewCount":     report.ViewCount,
+		"createdAt":     utils.FormatDateTime(report.CreatedAt),
+		"updatedAt":     utils.FormatDateTime(report.UpdatedAt),
+	}
+}
+
+func (c *ClubController) getPhysicalReportForClub(reportID uint, clubID uint) (*models.PhysicalTestReport, error) {
+	var report models.PhysicalTestReport
+	if err := c.db.Preload("Player").Preload("Activity").Preload("Record").
+		First(&report, reportID).Error; err != nil {
+		return nil, err
+	}
+
+	if report.ClubID != clubID {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	return &report, nil
+}
+
+func (c *ClubController) parsePhysicalReportData(report *models.PhysicalTestReport) (models.PhysicalTestReportData, error) {
+	var reportData models.PhysicalTestReportData
+	if err := json.Unmarshal([]byte(report.ReportData), &reportData); err != nil {
+		return reportData, err
+	}
+
+	if len(reportData.TestData) == 0 && report.Record != nil {
+		generated, err := services.NewPhysicalTestReportService(c.db).GenerateReport(report.Record)
+		if err == nil && generated != nil {
+			reportData.TestData = generated.TestData
+			reportData.GrowthTrend = generated.GrowthTrend
+			reportData.PercentileComparison = generated.PercentileComparison
+			if reportData.OverallRating == "" {
+				reportData.OverallRating = generated.OverallRating
+			}
+			if reportData.Percentile == 0 {
+				reportData.Percentile = generated.Percentile
+			}
+			if len(reportData.Strengths) == 0 {
+				reportData.Strengths = generated.Strengths
+			}
+			if len(reportData.Improvements) == 0 {
+				reportData.Improvements = generated.Improvements
+			}
+			if len(reportData.TrainingSuggestions) == 0 {
+				reportData.TrainingSuggestions = generated.TrainingSuggestions
+			}
+			if len(reportData.NutritionSuggestions) == 0 {
+				reportData.NutritionSuggestions = generated.NutritionSuggestions
+			}
+			if len(reportData.RestSuggestions) == 0 {
+				reportData.RestSuggestions = generated.RestSuggestions
+			}
+			if reportData.NextTestSuggestion == "" {
+				reportData.NextTestSuggestion = generated.NextTestSuggestion
+			}
+		}
+	}
+
+	return reportData, nil
+}
+
+// GetPlayerPhysicalReports 获取球员维度体测报告列表
+// GET /api/club/players/:id/physical-reports
+func (c *ClubController) GetPlayerPhysicalReports(ctx *gin.Context) {
+	userID := ctx.GetUint("userId")
+	playerID, err := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if err != nil {
+		utils.ValidationError(ctx, "无效的球员ID")
+		return
+	}
+
+	club, err := c.clubService.GetClubByUserID(userID)
+	if err != nil || club == nil {
+		utils.ForbiddenError(ctx, "无权限访问")
+		return
+	}
+
+	playerUserID, player, err := c.resolveClubPlayerUserID(club.ID, uint(playerID))
+	if err != nil {
+		utils.NotFoundError(ctx, "球员不存在")
+		return
+	}
+
+	var reports []models.PhysicalTestReport
+	if err := c.db.Preload("Player").Preload("Activity").Preload("Record").
+		Where("physical_test_reports.club_id = ? AND physical_test_reports.player_id = ?", club.ID, playerUserID).
+		Joins("LEFT JOIN physical_test_records ON physical_test_records.id = physical_test_reports.record_id").
+		Order("physical_test_records.test_date DESC, physical_test_reports.created_at DESC").
+		Find(&reports).Error; err != nil {
+		utils.ServerError(ctx, "获取体测报告失败")
+		return
+	}
+
+	list := make([]gin.H, 0, len(reports))
+	for _, report := range reports {
+		list = append(list, c.formatPhysicalReportItem(report))
+	}
+
+	playerName := ""
+	if player != nil {
+		playerName = player.Name
+		if playerName == "" {
+			playerName = player.Nickname
+		}
+	}
+
+	utils.SuccessResponse(ctx, gin.H{
+		"list": list,
+		"player": gin.H{
+			"id":   playerUserID,
+			"name": playerName,
+		},
+	})
+}
+
+// GetPhysicalReportDetail 获取球员维度体测报告详情
+// GET /api/club/physical-reports/:reportId
+func (c *ClubController) GetPhysicalReportDetail(ctx *gin.Context) {
+	userID := ctx.GetUint("userId")
+	reportID, err := strconv.ParseUint(ctx.Param("reportId"), 10, 32)
+	if err != nil {
+		utils.ValidationError(ctx, "无效的报告ID")
+		return
+	}
+
+	club, err := c.clubService.GetClubByUserID(userID)
+	if err != nil || club == nil {
+		utils.ForbiddenError(ctx, "无权限访问")
+		return
+	}
+
+	report, err := c.getPhysicalReportForClub(uint(reportID), club.ID)
+	if err != nil {
+		utils.NotFoundError(ctx, "体测报告不存在")
+		return
+	}
+
+	reportData, err := c.parsePhysicalReportData(report)
+	if err != nil {
+		utils.ServerError(ctx, "体测报告数据解析失败")
+		return
+	}
+
+	payload := c.formatPhysicalReportItem(*report)
+	payload["reportData"] = reportData
+	utils.SuccessResponse(ctx, payload)
+}
+
+func physicalReportItemName(key string) string {
+	names := map[string]string{
+		"height":             "身高",
+		"weight":             "体重",
+		"bmi":                "BMI",
+		"sprint_30m":         "30米跑",
+		"sprint_50m":         "50米跑",
+		"sprint_100m":        "100米跑",
+		"standing_long_jump": "立定跳远",
+		"vertical_jump":      "纵跳",
+		"sit_and_reach":      "坐位体前屈",
+		"push_up":            "俯卧撑",
+		"sit_up":             "仰卧起坐",
+		"plank":              "平板支撑",
+	}
+	if name, ok := names[key]; ok {
+		return name
+	}
+	return key
+}
+
+func physicalReportListHTML(items []string) string {
+	if len(items) == 0 {
+		return "<li>暂无</li>"
+	}
+
+	html := ""
+	for _, item := range items {
+		html += "<li>" + template.HTMLEscapeString(item) + "</li>"
+	}
+	return html
+}
+
+func physicalReportTestDataHTML(data map[string]models.TestItemData) string {
+	if len(data) == 0 {
+		return `<div class="empty">暂无单项体测数据</div>`
+	}
+
+	keys := make([]string, 0, len(data))
+	for key := range data {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	html := ""
+	for _, key := range keys {
+		item := data[key]
+		html += fmt.Sprintf(`<div class="data-card">
+  <div class="label">%s</div>
+  <div class="value">%.1f<span>%s</span></div>
+  <div class="meta">百分位 %d · %s</div>
+</div>`,
+			template.HTMLEscapeString(physicalReportItemName(key)),
+			item.Value,
+			template.HTMLEscapeString(item.Unit),
+			item.Percentile,
+			template.HTMLEscapeString(item.Rating),
+		)
+	}
+	return html
+}
+
+func buildPhysicalReportHTML(report *models.PhysicalTestReport, reportData models.PhysicalTestReportData, clubName string) string {
+	playerName := template.HTMLEscapeString(reportData.PlayerName)
+	if playerName == "" && report.Player != nil {
+		playerName = template.HTMLEscapeString(report.Player.Name)
+	}
+
+	activityName := "体测报告"
+	if report.Activity != nil && report.Activity.Name != "" {
+		activityName = report.Activity.Name
+	}
+
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>%s - 体测报告</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #f8fafc; color: #111827; margin: 0; padding: 36px; }
+.container { max-width: 860px; margin: 0 auto; background: #fff; border-radius: 16px; padding: 36px; border: 1px solid #e5e7eb; }
+.header { border-bottom: 3px solid #10b981; padding-bottom: 20px; margin-bottom: 28px; }
+.brand { color: #10b981; font-weight: 800; letter-spacing: 0.04em; }
+.title { font-size: 28px; font-weight: 800; margin: 12px 0 6px; }
+.subtitle { color: #64748b; }
+.info-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0; }
+.info-item { background: #ecfdf5; border-radius: 12px; padding: 14px; text-align: center; }
+.info-label { color: #64748b; font-size: 12px; margin-bottom: 4px; }
+.info-value { font-size: 18px; font-weight: 800; color: #064e3b; }
+.section { margin-top: 26px; }
+.section-title { color: #047857; font-size: 18px; font-weight: 800; margin-bottom: 12px; }
+.data-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.data-card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px; }
+.label { color: #64748b; font-size: 12px; }
+.value { font-size: 24px; font-weight: 800; margin-top: 4px; }
+.value span { font-size: 12px; color: #64748b; margin-left: 2px; }
+.meta { color: #059669; font-size: 12px; margin-top: 6px; }
+ul { margin: 0; padding-left: 20px; color: #334155; line-height: 1.8; }
+.empty { color: #64748b; background: #f1f5f9; padding: 16px; border-radius: 12px; }
+.footer { margin-top: 36px; padding-top: 18px; border-top: 1px solid #e5e7eb; color: #94a3b8; font-size: 12px; text-align: center; }
+@media print { body { background: #fff; padding: 0; } .container { border: none; } }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="brand">少年球探</div>
+    <div class="title">青少年体能评估报告</div>
+    <div class="subtitle">%s · %s</div>
+  </div>
+  <div class="info-grid">
+    <div class="info-item"><div class="info-label">球员</div><div class="info-value">%s</div></div>
+    <div class="info-item"><div class="info-label">年龄组</div><div class="info-value">%s</div></div>
+    <div class="info-item"><div class="info-label">综合评级</div><div class="info-value">%s</div></div>
+    <div class="info-item"><div class="info-label">百分位</div><div class="info-value">%d</div></div>
+  </div>
+  <div class="section">
+    <div class="section-title">单项体测数据</div>
+    <div class="data-grid">%s</div>
+  </div>
+  <div class="section">
+    <div class="section-title">优势项目</div>
+    <ul>%s</ul>
+  </div>
+  <div class="section">
+    <div class="section-title">待提升方向</div>
+    <ul>%s</ul>
+  </div>
+  <div class="section">
+    <div class="section-title">训练建议</div>
+    <ul>%s</ul>
+  </div>
+  <div class="footer">报告日期：%s · 俱乐部：%s</div>
+</div>
+</body>
+</html>`,
+		playerName,
+		template.HTMLEscapeString(clubName),
+		template.HTMLEscapeString(activityName),
+		playerName,
+		template.HTMLEscapeString(reportData.PlayerAgeGroup),
+		template.HTMLEscapeString(reportData.OverallRating),
+		reportData.Percentile,
+		physicalReportTestDataHTML(reportData.TestData),
+		physicalReportListHTML(reportData.Strengths),
+		physicalReportListHTML(reportData.Improvements),
+		physicalReportListHTML(reportData.TrainingSuggestions),
+		template.HTMLEscapeString(reportData.TestDate),
+		template.HTMLEscapeString(clubName),
+	)
+}
+
+// ExportPhysicalReport 导出球员维度体测报告
+// GET /api/club/physical-reports/:reportId/export
+func (c *ClubController) ExportPhysicalReport(ctx *gin.Context) {
+	userID := ctx.GetUint("userId")
+	reportID, err := strconv.ParseUint(ctx.Param("reportId"), 10, 32)
+	if err != nil {
+		utils.ValidationError(ctx, "无效的报告ID")
+		return
+	}
+
+	club, err := c.clubService.GetClubByUserID(userID)
+	if err != nil || club == nil {
+		utils.ForbiddenError(ctx, "无权限访问")
+		return
+	}
+
+	report, err := c.getPhysicalReportForClub(uint(reportID), club.ID)
+	if err != nil {
+		utils.NotFoundError(ctx, "体测报告不存在")
+		return
+	}
+
+	if report.PDFURL != "" {
+		isRemotePDF := len(report.PDFURL) >= 4 && report.PDFURL[:4] == "http"
+		if !isRemotePDF {
+			filePath := path.Join(".", report.PDFURL)
+			if _, err := os.Stat(filePath); err == nil {
+				playerName := "球员"
+				if report.Player != nil && report.Player.Name != "" {
+					playerName = report.Player.Name
+				}
+				setReportExportHeaders(ctx, "pdf", fmt.Sprintf("%s_体测报告.pdf", playerName))
+				ctx.File(filePath)
+				return
+			}
+		}
+	}
+
+	reportData, err := c.parsePhysicalReportData(report)
+	if err != nil {
+		utils.ServerError(ctx, "体测报告数据解析失败")
+		return
+	}
+
+	fileName := reportData.PlayerName
+	if fileName == "" && report.Player != nil {
+		fileName = report.Player.Name
+	}
+	if fileName == "" {
+		fileName = "球员"
+	}
+
+	setReportExportHeaders(ctx, "html", fmt.Sprintf("%s_体测报告.html", fileName))
+	ctx.String(200, buildPhysicalReportHTML(report, reportData, club.Name))
+}
+
 // ExportReport 导出报告（PDF/HTML 过渡方案）
 // GET /api/club/reports/:reportId/export
 func (c *ClubController) ExportReport(ctx *gin.Context) {
@@ -1057,16 +1546,14 @@ func (c *ClubController) ExportReport(ctx *gin.Context) {
 	if report.PdfURL != "" {
 		filePath := path.Join(".", report.PdfURL)
 		if _, err := os.Stat(filePath); err == nil {
-			ctx.Header("Content-Type", "application/pdf")
-			ctx.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s_球探报告.pdf\"", report.PlayerName))
+			setReportExportHeaders(ctx, "pdf", fmt.Sprintf("%s_球探报告.pdf", report.PlayerName))
 			ctx.File(filePath)
 			return
 		}
 	}
 
 	// 否则返回精美格式的 HTML，前端可直接打印为 PDF
-	ctx.Header("Content-Type", "text/html; charset=utf-8")
-	ctx.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s_球探报告.html\"", report.PlayerName))
+	setReportExportHeaders(ctx, "html", fmt.Sprintf("%s_球探报告.html", report.PlayerName))
 
 	html := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="zh-CN">

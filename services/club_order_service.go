@@ -93,9 +93,9 @@ func (s *ClubOrderService) GetOrderStats(clubID uint) (map[string]interface{}, e
 			Select("COALESCE(SUM(final_price), 0)").Scan(&monthAmount)
 
 		monthlyTrend = append(monthlyTrend, map[string]interface{}{
-			"name":    monthLabel,
-			"orders":  monthOrders,
-			"amount":  monthAmount,
+			"name":   monthLabel,
+			"orders": monthOrders,
+			"amount": monthAmount,
 		})
 	}
 	stats["monthlyTrend"] = monthlyTrend
@@ -135,9 +135,9 @@ func (s *ClubOrderService) GetOrderStats(clubID uint) (map[string]interface{}, e
 
 	// TOP消费球员
 	type playerSpending struct {
-		PlayerID  uint    `gorm:"column:player_id"`
-		Name      string  `gorm:"column:name"`
-		Orders    int64   `gorm:"column:orders"`
+		PlayerID   uint    `gorm:"column:player_id"`
+		Name       string  `gorm:"column:name"`
+		Orders     int64   `gorm:"column:orders"`
 		TotalSpent float64 `gorm:"column:total_spent"`
 		LastReport string  `gorm:"column:last_report"`
 	}
@@ -182,34 +182,62 @@ func (s *ClubOrderService) GetOrderStats(clubID uint) (map[string]interface{}, e
 // CreateOrders 批量创建订单
 func (s *ClubOrderService) CreateOrders(clubID uint, userID uint, playerIDs []uint, serviceType string, analystID *uint, remark string, discount float64) ([]models.ClubOrder, error) {
 	price := getServicePrice(serviceType)
+	if discount <= 0 {
+		discount = 1
+	}
 
-	orderNo := generateOrderNo()
 	orders := make([]models.ClubOrder, 0, len(playerIDs))
+	resolvedAnalystID := uint(0)
+	if analystID != nil {
+		resolvedAnalystID = *analystID
+	}
+
+	tx := s.db.Begin()
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
 
 	for _, playerID := range playerIDs {
-		finalPrice := price
-		if discount > 0 && discount < 1 {
-			finalPrice = price * float64(len(playerIDs)) * discount
+		if playerID == 0 {
+			tx.Rollback()
+			return nil, fmt.Errorf("无效的球员ID")
+		}
+
+		var memberCount int64
+		if err := tx.Model(&models.ClubPlayer{}).
+			Where("club_id = ? AND user_id = ? AND status = ?", clubID, playerID, "active").
+			Count(&memberCount).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		if memberCount == 0 {
+			tx.Rollback()
+			return nil, fmt.Errorf("球员不属于该俱乐部")
 		}
 
 		order := models.ClubOrder{
 			ClubID:      clubID,
 			UserID:      userID,
-			OrderNo:     orderNo,
+			OrderNo:     generateOrderNo(),
 			PlayerID:    playerID,
-			AnalystID:   *analystID,
+			AnalystID:   resolvedAnalystID,
 			ServiceType: serviceType,
 			Price:       price,
 			Discount:    discount,
-			FinalPrice:  finalPrice,
+			FinalPrice:  price * discount,
 			Status:      "pending",
 			Remark:      remark,
 		}
 
-		if err := s.db.Create(&order).Error; err != nil {
+		if err := tx.Create(&order).Error; err != nil {
+			tx.Rollback()
 			return nil, err
 		}
 		orders = append(orders, order)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
 	}
 
 	return orders, nil

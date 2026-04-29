@@ -57,6 +57,29 @@ func (c *TeamController) getUserID(ctx *gin.Context) uint {
 	return middleware.GetUserID(ctx)
 }
 
+func (c *TeamController) ensureClubOwner(ctx *gin.Context, clubID uint) bool {
+	userID := c.getUserID(ctx)
+	if userID == 0 {
+		utils.ForbiddenError(ctx, "无权限访问该俱乐部")
+		return false
+	}
+	if c.db == nil {
+		utils.ServerError(ctx, "数据库未初始化")
+		return false
+	}
+
+	var count int64
+	if err := c.db.Model(&models.Club{}).Where("id = ? AND user_id = ?", clubID, userID).Count(&count).Error; err != nil {
+		utils.ServerError(ctx, "权限校验失败")
+		return false
+	}
+	if count == 0 {
+		utils.ForbiddenError(ctx, "无权限访问该俱乐部")
+		return false
+	}
+	return true
+}
+
 // ==================== 球队基本信息 ====================
 
 // GetTeamDetail 获取球队详情
@@ -498,17 +521,17 @@ func (c *TeamController) GetWeeklyReports(ctx *gin.Context) {
 			playerName = player.Name
 		}
 		result = append(result, gin.H{
-			"id":            r.ID,
-			"playerId":      r.PlayerID,
-			"playerName":    playerName,
-			"teamId":        r.TeamID,
-			"coachId":       r.CoachID,
-			"weekStart":      r.WeekStart,
-			"weekEnd":        r.WeekEnd,
+			"id":                  r.ID,
+			"playerId":            r.PlayerID,
+			"playerName":          playerName,
+			"teamId":              r.TeamID,
+			"coachId":             r.CoachID,
+			"weekStart":           r.WeekStart,
+			"weekEnd":             r.WeekEnd,
 			"knowledgeSummary":    r.KnowledgeSummary,
 			"tacticalContent":     r.TacticalContent,
 			"physicalCondition":   r.PhysicalCondition,
-			"matchPerformance":     r.MatchPerformance,
+			"matchPerformance":    r.MatchPerformance,
 			"selfAttitudeRating":  r.SelfAttitudeRating,
 			"selfTechniqueRating": r.SelfTechniqueRating,
 			"selfTeamworkRating":  r.SelfTeamworkRating,
@@ -516,14 +539,14 @@ func (c *TeamController) GetWeeklyReports(ctx *gin.Context) {
 			"reviewStatus":        r.ReviewStatus,
 			"reviewComment":       r.ReviewComment,
 			"coachAttitudeRating": r.CoachAttitudeRating,
-			"createdAt":        utils.FormatTime(&r.CreatedAt),
+			"createdAt":           utils.FormatTime(&r.CreatedAt),
 		})
 	}
 
 	utils.SuccessResponse(ctx, gin.H{
-		"list":  result,
-		"total": total,
-		"page":  page,
+		"list":     result,
+		"total":    total,
+		"page":     page,
 		"pageSize": pageSize,
 	})
 }
@@ -544,8 +567,8 @@ func (c *TeamController) CreateMatchSummary(ctx *gin.Context) {
 		MatchName     string `json:"matchName" binding:"required"`
 		MatchDate     string `json:"matchDate" binding:"required"`
 		Opponent      string `json:"opponent" binding:"required"`
-		Location      string `json:"location"`      // home/away/neutral
-		MatchFormat   string `json:"matchFormat"`   // 5人制/8人制/11人制
+		Location      string `json:"location"`    // home/away/neutral
+		MatchFormat   string `json:"matchFormat"` // 5人制/8人制/11人制
 		OurScore      int    `json:"ourScore"`
 		OpponentScore int    `json:"opponentScore"`
 		PlayerIDs     []uint `json:"playerIds"`
@@ -671,6 +694,9 @@ func (c *TeamController) GetTeams(ctx *gin.Context) {
 		utils.ValidationError(ctx, "无效的俱乐部ID")
 		return
 	}
+	if !c.ensureClubOwner(ctx, uint(clubID)) {
+		return
+	}
 
 	includeDeleted := ctx.Query("includeDeleted") == "true"
 	status := ctx.DefaultQuery("status", "active")
@@ -708,6 +734,9 @@ func (c *TeamController) CreateTeam(ctx *gin.Context) {
 	clubID, err := strconv.ParseUint(ctx.Param("clubId"), 10, 32)
 	if err != nil {
 		utils.ValidationError(ctx, "无效的俱乐部ID")
+		return
+	}
+	if !c.ensureClubOwner(ctx, uint(clubID)) {
 		return
 	}
 
@@ -894,7 +923,7 @@ func (c *TeamController) CreateInvitation(ctx *gin.Context) {
 	creatorID := ctx.GetUint("userId")
 
 	var req struct {
-		Type        string `json:"type" binding:"required"`
+		Type         string `json:"type" binding:"required"`
 		TargetUserID *uint  `json:"targetUserId"`
 		TargetPhone  string `json:"targetPhone"`
 	}
@@ -955,8 +984,8 @@ func (c *TeamController) CreateInvitation(ctx *gin.Context) {
 	}
 
 	utils.SuccessResponse(ctx, gin.H{
-		"code":  inviteCode,
-		"id":    inv.ID,
+		"code":    inviteCode,
+		"id":      inv.ID,
 		"message": "邀请创建成功",
 	})
 }

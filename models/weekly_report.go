@@ -288,27 +288,27 @@ type WeeklyReportSubmit struct {
 
 	// ==================== 训练内容反馈 ====================
 	KnowledgeSummary  string `json:"knowledgeSummary" binding:"required,min=10,max=500"` // 本周训练知识点总结 ⭐
-	TechnicalContent  string `json:"technicalContent" max=500`                           // 技术训练内容
-	TacticalContent   string `json:"tacticalContent" max=500`                            // 战术训练内容
-	PhysicalCondition string `json:"physicalCondition" max=300`                          // 体能训练情况
+	TechnicalContent  string `json:"technicalContent" binding:"max=500"`                 // 技术训练内容
+	TacticalContent   string `json:"tacticalContent" binding:"max=500"`                  // 战术训练内容
+	PhysicalCondition string `json:"physicalCondition" binding:"max=300"`                // 体能训练情况
 	MatchPerformance  string `json:"matchPerformance"`                                     // 比赛/对抗表现
 
 	// ==================== 自我评价 - 多维度评分 ====================
 	SelfAttitudeRating  int    `json:"selfAttitudeRating" binding:"required,min=1,max=5"` // 训练态度自评 1-5
 	SelfTechniqueRating int    `json:"selfTechniqueRating" binding:"required,min=1,max=5"` // 技术表现自评 1-5
 	SelfTeamworkRating  int    `json:"selfTeamworkRating" binding:"required,min=1,max=5"`  // 团队协作自评 1-5
-	ImprovementsDetail  string `json:"improvementsDetail" max=300`                         // 本周进步点
-	Weaknesses          string `json:"weaknesses" max=300`                                 // 待改进方面
+	ImprovementsDetail  string `json:"improvementsDetail" binding:"max=300"`               // 本周进步点
+	Weaknesses          string `json:"weaknesses" binding:"max=300"`                       // 待改进方面
 
 	// ==================== 身体状态反馈 ====================
 	FatigueLevel  int    `json:"fatigueLevel" binding:"required,min=1,max=5"` // 疲劳程度 1-5
-	Injuries      string `json:"injuries" max=200`                              // 伤病情况
+	Injuries      string `json:"injuries" binding:"max=200"`                    // 伤病情况
 	SleepQuality  int    `json:"sleepQuality" binding:"required,min=1,max=5"` // 睡眠质量 1-5
-	DietCondition string `json:"dietCondition" max=200`                         // 饮食情况
+	DietCondition string `json:"dietCondition" binding:"max=200"`               // 饮食情况
 
 	// ==================== 其他信息 ====================
-	MessageToCoach string   `json:"messageToCoach" max=300` // 想对教练说的话
-	Attachments    []string `json:"attachments"`            // 附件URL数组
+	MessageToCoach string   `json:"messageToCoach" binding:"max=300"` // 想对教练说的话
+	Attachments    []string `json:"attachments"`                      // 附件URL数组
 }
 
 // WeeklyReportReview 教练审核请求
@@ -326,9 +326,9 @@ type WeeklyReportReview struct {
 	ReviewComment           string `json:"reviewComment" binding:"required,min=10,max=500"`          // 整体表现评价
 	StrengthsAcknowledgment string `json:"strengthsAcknowledgment" binding:"required,min=5,max=300"`  // 优点肯定
 	Suggestions             string `json:"suggestions" binding:"required_if=Status rejected,max=500"` // 改进建议（退回时必填）
-	KnowledgeFeedback       string `json:"knowledgeFeedback" max=300`                                   // 知识点理解偏差
-	NextWeekFocus           string `json:"nextWeekFocus" max=300`                                       // 下周训练重点
-	RecommendAward          bool   `json:"recommendAward"`                                              // 是否推荐表彰
+	KnowledgeFeedback       string `json:"knowledgeFeedback" binding:"max=300"`                       // 知识点理解偏差
+	NextWeekFocus           string `json:"nextWeekFocus" binding:"max=300"`                           // 下周训练重点
+	RecommendAward          bool   `json:"recommendAward"`                                            // 是否推荐表彰
 }
 
 // CreateWeeklyReportInput 教练发起周报的请求（为多个球员创建）

@@ -129,7 +129,7 @@ func (s *PhysicalTestService) DeletePhysicalTest(id uint) error {
 func (s *PhysicalTestService) GetCompletedRecordCount(activityID uint) (int, error) {
 	var count int64
 	err := s.db.Model(&models.PhysicalTestRecord{}).
-		Where("activity_id = ? AND (height IS NOT NULL OR weight IS NOT NULL OR sprint_30m IS NOT NULL)", activityID).
+		Where("activity_id = ? AND (height IS NOT NULL OR weight IS NOT NULL OR sprint30m IS NOT NULL)", activityID).
 		Count(&count).Error
 	return int(count), err
 }

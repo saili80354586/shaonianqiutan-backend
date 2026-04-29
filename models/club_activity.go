@@ -10,8 +10,8 @@ type ClubActivity struct {
 	ID              uint      `json:"id" gorm:"primaryKey"`
 	ClubID          uint      `json:"club_id" gorm:"index;not null"`
 	Title           string    `json:"title" gorm:"size:200;not null"`
-	Type            string    `json:"type" gorm:"size:50"`      // external: 外部活动(足球嘉年华), internal: 内部活动(球员团建)
-	Status          string    `json:"status" gorm:"size:50"`    // upcoming: 即将开始, ongoing: 进行中, ended: 已结束
+	Type            string    `json:"type" gorm:"size:50"`   // external: 外部活动(足球嘉年华), internal: 内部活动(球员团建)
+	Status          string    `json:"status" gorm:"size:50"` // upcoming: 即将开始, ongoing: 进行中, ended: 已结束
 	Description     string    `json:"description" gorm:"type:text"`
 	CoverImage      string    `json:"coverImage" gorm:"size:500"`
 	StartTime       time.Time `json:"startTime"`
@@ -21,9 +21,9 @@ type ClubActivity struct {
 	ContactPhone    string    `json:"contactPhone" gorm:"size:50"`
 	ContactWechat   string    `json:"contactWechat" gorm:"size:100"`
 	PublishStatus   string    `json:"publishStatus" gorm:"size:50;default:'published'"` // draft, published, unpublished
-	IsReview        bool      `json:"isReview" gorm:"default:false"`           // 是否作为回顾展示
-	ReviewContent   string    `json:"reviewContent" gorm:"type:text"`          // 回顾内容
-	ReviewImages    string    `json:"reviewImages" gorm:"type:text"`           // JSON 图片数组字符串
+	IsReview        bool      `json:"isReview" gorm:"default:false"`                    // 是否作为回顾展示
+	ReviewContent   string    `json:"reviewContent" gorm:"type:text"`                   // 回顾内容
+	ReviewImages    string    `json:"reviewImages" gorm:"type:text"`                    // JSON 图片数组字符串
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -57,7 +57,7 @@ type ClubActivityRegistration struct {
 	Phone      string    `json:"phone" gorm:"size:50"`
 	Wechat     string    `json:"wechat" gorm:"size:100"`
 	Remark     string    `json:"remark" gorm:"size:300"`
-	Status     string    `json:"status" gorm:"size:50;default:'pending'"` // pending, confirmed, cancelled
+	Status     string    `json:"status" gorm:"size:50;default:'pending'"` // pending, confirmed, rejected, cancelled, checked_in
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }

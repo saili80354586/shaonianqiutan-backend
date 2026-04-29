@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -14,6 +15,20 @@ import (
 // ClubService 俱乐部服务
 type ClubService struct {
 	db *gorm.DB
+}
+
+type ClubProfileUpdateInput struct {
+	Name            *string
+	Logo            *string
+	Description     *string
+	Address         *string
+	ContactName     *string
+	ContactPhone    *string
+	Province        *string
+	City            *string
+	ClubSize        *string
+	EstablishedYear *int
+	Achievements    *string
 }
 
 // NewClubService 创建俱乐部服务
@@ -32,7 +47,7 @@ func (s *ClubService) GetClubByUserID(userID uint) (*models.Club, error) {
 }
 
 // UpdateClubProfile 更新俱乐部资料
-func (s *ClubService) UpdateClubProfile(userID uint, name, logo, description, address, contactName, contactPhone string) (*models.Club, error) {
+func (s *ClubService) UpdateClubProfile(userID uint, input ClubProfileUpdateInput) (*models.Club, error) {
 	var club models.Club
 	err := s.db.Where("user_id = ?", userID).First(&club).Error
 	if err != nil {
@@ -40,28 +55,46 @@ func (s *ClubService) UpdateClubProfile(userID uint, name, logo, description, ad
 	}
 
 	updates := map[string]interface{}{}
-	if name != "" {
-		updates["name"] = name
+	if input.Name != nil {
+		updates["name"] = strings.TrimSpace(*input.Name)
 	}
-	if logo != "" {
-		updates["logo"] = logo
+	if input.Logo != nil {
+		updates["logo"] = strings.TrimSpace(*input.Logo)
 	}
-	if description != "" {
-		updates["description"] = description
+	if input.Description != nil {
+		updates["description"] = strings.TrimSpace(*input.Description)
 	}
-	if address != "" {
-		updates["address"] = address
+	if input.Address != nil {
+		updates["address"] = strings.TrimSpace(*input.Address)
 	}
-	if contactName != "" {
-		updates["contact_name"] = contactName
+	if input.ContactName != nil {
+		updates["contact_name"] = strings.TrimSpace(*input.ContactName)
 	}
-	if contactPhone != "" {
-		updates["contact_phone"] = contactPhone
+	if input.ContactPhone != nil {
+		updates["contact_phone"] = strings.TrimSpace(*input.ContactPhone)
+	}
+	if input.Province != nil {
+		updates["province"] = strings.TrimSpace(*input.Province)
+	}
+	if input.City != nil {
+		updates["city"] = strings.TrimSpace(*input.City)
+	}
+	if input.ClubSize != nil {
+		updates["club_size"] = strings.TrimSpace(*input.ClubSize)
+	}
+	if input.EstablishedYear != nil {
+		updates["established_year"] = *input.EstablishedYear
 	}
 
 	if len(updates) > 0 {
 		err = s.db.Model(&club).Updates(updates).Error
 		if err != nil {
+			return nil, err
+		}
+	}
+
+	if input.Achievements != nil {
+		if err := s.db.Model(&models.User{}).Where("id = ?", club.UserID).Update("achievements", strings.TrimSpace(*input.Achievements)).Error; err != nil {
 			return nil, err
 		}
 	}
@@ -105,12 +138,19 @@ func (s *ClubService) GetDashboardOverview(clubID uint) (map[string]interface{},
 
 	// 体测统计
 	var totalPhysicalTests int64
-	s.db.Model(&models.PhysicalTestActivity{}).Where("club_id = ?", clubID).Count(&totalPlayers)
+	s.db.Model(&models.PhysicalTestActivity{}).Where("club_id = ?", clubID).Count(&totalPhysicalTests)
 	overview["totalPhysicalTests"] = totalPhysicalTests
 
 	var thisMonthTests int64
 	s.db.Model(&models.PhysicalTestActivity{}).Where("club_id = ? AND created_at >= ?", clubID, getStartOfMonth()).Count(&thisMonthTests)
 	overview["physicalTestsThisMonth"] = thisMonthTests
+
+	var monthlySpending float64
+	s.db.Model(&models.ClubOrder{}).
+		Where("club_id = ? AND status IN ? AND created_at >= ?", clubID, []string{"paid", "processing", "completed"}, getStartOfMonth()).
+		Select("COALESCE(SUM(final_price), 0)").
+		Scan(&monthlySpending)
+	overview["monthlySpending"] = monthlySpending
 
 	// ========== 运营洞察数据 ==========
 	insights := make(map[string]interface{})
@@ -146,17 +186,20 @@ func (s *ClubService) GetDashboardOverview(clubID uint) (map[string]interface{},
 
 	// 3. 待完成体测记录数（进行中体测且未录入记录的球员）
 	var pendingPhysicalTestRecords int64
-	s.db.Raw(`
-		SELECT COALESCE(SUM(pt.player_count - COALESCE(complete_counts.completed, 0)), 0)
-		FROM physical_test_activities pt
-		JOIN (
-			SELECT physical_test_id, COUNT(DISTINCT player_id) as completed
-			FROM physical_test_records
-			WHERE deleted_at IS NULL
-			GROUP BY physical_test_id
-		) complete_counts ON complete_counts.physical_test_id = pt.id
-		WHERE pt.club_id = ? AND pt.status IN ?
-	`, clubID, []string{"pending", "ongoing"}).Scan(&pendingPhysicalTestRecords)
+	var activeTests []models.PhysicalTestActivity
+	if err := s.db.Where("club_id = ? AND status IN ?", clubID, []string{"pending", "ongoing"}).Find(&activeTests).Error; err == nil {
+		for _, test := range activeTests {
+			playerCount := int64(len(test.GetPlayerIDs()))
+			var completed int64
+			s.db.Model(&models.PhysicalTestRecord{}).
+				Where("activity_id = ?", test.ID).
+				Distinct("player_id").
+				Count(&completed)
+			if playerCount > completed {
+				pendingPhysicalTestRecords += playerCount - completed
+			}
+		}
+	}
 	insights["pendingPhysicalTestRecords"] = pendingPhysicalTestRecords
 
 	// 4. 待支付订单数（复用 pendingOrders）
@@ -414,13 +457,174 @@ func (s *ClubService) GetPlayerPositionStats(clubID uint) ([]map[string]interfac
 
 // GetAbilityRadar 获取梯队能力雷达图数据
 func (s *ClubService) GetAbilityRadar(clubID uint) (map[string]interface{}, error) {
-	// TODO: 基于体测数据计算真实能力值
-	// 目前返回模拟数据
+	teamMetrics, err := s.getAbilityMetricAverages(&clubID)
+	if err != nil {
+		return nil, err
+	}
+
+	platformMetrics, err := s.getAbilityMetricAverages(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	labels, teamAvg := buildAbilityRadarScores(teamMetrics)
+	platformScores := abilityScoreMap(platformMetrics)
+	platformAvg := make([]int, 0, len(labels))
+	for _, label := range labels {
+		platformAvg = append(platformAvg, platformScores[label])
+	}
+
 	return map[string]interface{}{
-		"labels":      []string{"速度", "力量", "耐力", "灵敏", "柔韧", "技术"},
-		"teamAvg":     []int{75, 68, 72, 70, 65, 78},
-		"platformAvg": []int{70, 65, 68, 67, 63, 72},
+		"labels":      labels,
+		"teamAvg":     teamAvg,
+		"platformAvg": platformAvg,
 	}, nil
+}
+
+type abilityMetricAverages struct {
+	Sprint30m        *float64 `gorm:"column:sprint30m"`
+	Sprint50m        *float64 `gorm:"column:sprint50m"`
+	Sprint100m       *float64 `gorm:"column:sprint100m"`
+	AgilityLadder    *float64 `gorm:"column:agility_ladder"`
+	TTest            *float64 `gorm:"column:t_test"`
+	ShuttleRun       *float64 `gorm:"column:shuttle_run"`
+	StandingLongJump *float64 `gorm:"column:standing_long_jump"`
+	VerticalJump     *float64 `gorm:"column:vertical_jump"`
+	SitAndReach      *float64 `gorm:"column:sit_and_reach"`
+	PushUp           *float64 `gorm:"column:push_up"`
+	SitUp            *float64 `gorm:"column:sit_up"`
+	Plank            *float64 `gorm:"column:plank"`
+}
+
+func (s *ClubService) getAbilityMetricAverages(clubID *uint) (abilityMetricAverages, error) {
+	var metrics abilityMetricAverages
+	query := s.db.Model(&models.PhysicalTestRecord{})
+	if clubID != nil {
+		query = query.Where("club_id = ?", *clubID)
+	}
+
+	err := query.Select(`
+		AVG(sprint30m) AS sprint30m,
+		AVG(sprint50m) AS sprint50m,
+		AVG(sprint100m) AS sprint100m,
+		AVG(agility_ladder) AS agility_ladder,
+		AVG(t_test) AS t_test,
+		AVG(shuttle_run) AS shuttle_run,
+		AVG(standing_long_jump) AS standing_long_jump,
+		AVG(vertical_jump) AS vertical_jump,
+		AVG(sit_and_reach) AS sit_and_reach,
+		AVG(push_up) AS push_up,
+		AVG(sit_up) AS sit_up,
+		AVG(plank) AS plank
+	`).Scan(&metrics).Error
+	return metrics, err
+}
+
+func buildAbilityRadarScores(metrics abilityMetricAverages) ([]string, []int) {
+	scores := abilityScoreMap(metrics)
+	order := []string{"速度", "力量", "耐力", "灵敏", "柔韧", "爆发"}
+	labels := make([]string, 0, len(order))
+	values := make([]int, 0, len(order))
+
+	for _, label := range order {
+		if score, ok := scores[label]; ok {
+			labels = append(labels, label)
+			values = append(values, score)
+		}
+	}
+
+	return labels, values
+}
+
+func abilityScoreMap(metrics abilityMetricAverages) map[string]int {
+	result := map[string]int{}
+	if score := averageAbilityScores(
+		scoreLowerIsBetter(metrics.Sprint30m, 4.2, 6.5),
+		scoreLowerIsBetter(metrics.Sprint50m, 7.2, 10.5),
+		scoreLowerIsBetter(metrics.Sprint100m, 13.0, 19.0),
+	); score != nil {
+		result["速度"] = roundAbilityScore(*score)
+	}
+	if score := averageAbilityScores(
+		scoreHigherIsBetter(metrics.PushUp, 8, 45),
+		scoreHigherIsBetter(metrics.SitUp, 15, 65),
+		scoreHigherIsBetter(metrics.Plank, 20, 180),
+	); score != nil {
+		result["力量"] = roundAbilityScore(*score)
+	}
+	if score := averageAbilityScores(
+		scoreLowerIsBetter(metrics.ShuttleRun, 9.5, 14.5),
+		scoreLowerIsBetter(metrics.Sprint100m, 13.0, 19.0),
+		scoreHigherIsBetter(metrics.Plank, 20, 180),
+	); score != nil {
+		result["耐力"] = roundAbilityScore(*score)
+	}
+	if score := averageAbilityScores(
+		scoreLowerIsBetter(metrics.AgilityLadder, 7.5, 13.0),
+		scoreLowerIsBetter(metrics.TTest, 8.5, 14.0),
+		scoreLowerIsBetter(metrics.ShuttleRun, 9.5, 14.5),
+	); score != nil {
+		result["灵敏"] = roundAbilityScore(*score)
+	}
+	if score := scoreHigherIsBetter(metrics.SitAndReach, -5, 25); score != nil {
+		result["柔韧"] = roundAbilityScore(*score)
+	}
+	if score := averageAbilityScores(
+		scoreHigherIsBetter(metrics.StandingLongJump, 120, 260),
+		scoreHigherIsBetter(metrics.VerticalJump, 20, 70),
+	); score != nil {
+		result["爆发"] = roundAbilityScore(*score)
+	}
+	return result
+}
+
+func averageAbilityScores(scores ...*float64) *float64 {
+	var sum float64
+	var count int
+	for _, score := range scores {
+		if score == nil {
+			continue
+		}
+		sum += *score
+		count++
+	}
+	if count == 0 {
+		return nil
+	}
+	avg := sum / float64(count)
+	return &avg
+}
+
+func scoreLowerIsBetter(value *float64, best, worst float64) *float64 {
+	if value == nil || *value <= 0 || best == worst {
+		return nil
+	}
+	score := ((*value - worst) / (best - worst)) * 100
+	score = clampAbilityScore(score)
+	return &score
+}
+
+func scoreHigherIsBetter(value *float64, worst, best float64) *float64 {
+	if value == nil || *value <= 0 || best == worst {
+		return nil
+	}
+	score := ((*value - worst) / (best - worst)) * 100
+	score = clampAbilityScore(score)
+	return &score
+}
+
+func clampAbilityScore(score float64) float64 {
+	if score < 0 {
+		return 0
+	}
+	if score > 100 {
+		return 100
+	}
+	return score
+}
+
+func roundAbilityScore(score float64) int {
+	return int(math.Round(score))
 }
 
 // GetTopPerformers 获取TOP球员排行

@@ -12,8 +12,8 @@ func SetupClubActivityRoutes(r *gin.RouterGroup, ctrl *controllers.ClubActivityC
 	{
 		// 公开接口：获取活动列表
 		clubs.GET("/:clubId/activities", ctrl.ListActivities)
-		// 公开接口：报名活动
-		clubs.POST("/:clubId/activities/:id/register", ctrl.RegisterActivity)
+		// 公开接口：报名活动，登录用户会自动绑定报名记录
+		clubs.POST("/:clubId/activities/:id/register", middleware.OptionalAuthMiddleware(), ctrl.RegisterActivity)
 
 		// 球员认证接口：取消报名
 		clubs.POST("/:clubId/activities/:id/cancel", middleware.AuthMiddleware(), ctrl.CancelRegistration)
@@ -40,6 +40,8 @@ func SetupClubActivityRoutes(r *gin.RouterGroup, ctrl *controllers.ClubActivityC
 		activities.GET("", ctrl.ListPublicActivities)
 		activities.GET("/map", ctrl.GetActivitiesMap)
 		activities.GET("/:id", ctrl.GetPublicActivity)
+		activities.POST("/:id/register", middleware.AuthMiddleware(), ctrl.RegisterPublicActivity)
+		activities.POST("/:id/cancel", middleware.AuthMiddleware(), ctrl.CancelPublicRegistration)
 	}
 
 	// 用户认证接口：我的报名
