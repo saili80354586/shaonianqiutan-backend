@@ -89,6 +89,7 @@ func main() {
 		&models.MatchSchedule{},
 		&models.VideoAnalysis{},
 		&models.AnalysisHighlight{},
+		&models.VideoClipExportJob{},
 		&models.PlayerFilterPreset{},
 		&models.AdminOperationLog{},
 		&models.PlayerShortlist{},
@@ -239,18 +240,20 @@ func main() {
 		weeklyReportService := services.NewWeeklyReportService(db, weeklyReportRepo, teamRepo, userRepo)
 		matchSummaryService := services.NewMatchSummaryService(db, matchSummaryRepo, playerReviewRepo, matchVideoRepo, teamRepo, userRepo)
 		notificationService := services.NewNotificationService(db, notificationRepo, userRepo)
+		analystService.SetNotificationService(notificationService)
 		weeklyReportService.SetNotificationService(notificationService)
 		clubOrderService := services.NewClubOrderService(db)
 		socialService := services.NewSocialService(socialRepo, notificationService)
 		messageService := services.NewMessageService(messageRepo, userRepo, socialRepo, notificationService)
 		videoAnalysisRepo := models.NewVideoAnalysisRepository(db)
 		adminService := services.NewAdminService(userRepo, reportRepo, orderRepo, analystRepo, analystApplicationRepo, contentReportRepo, sensitiveWordRepo, platformAnnRepo, bannerRepo, faqRepo, loginLogRepo, videoAnalysisRepo, assignmentRepo, statusHistoryRepo)
+		adminService.SetNotificationService(notificationService)
 
 		// ========== Controller 初始化 ==========
 		authController := controllers.NewAuthController(authService, smsService)
 		userController := controllers.NewUserController(authService, physicalTestService, db)
 		orderController := controllers.NewOrderController(orderService)
-		reportController := controllers.NewReportController(reportService, authService)
+		reportController := controllers.NewReportController(reportService, authService, db)
 		analystController := controllers.NewAnalystController(analystService, db)
 		clubController := controllers.NewClubController(clubService, db, weeklyReportRepo, matchSummaryRepo, orderRepo, physicalTestService, adminLogRepo)
 		physicalTestController := controllers.NewPhysicalTestController(physicalTestService)
@@ -280,6 +283,7 @@ func main() {
 		// AI服务 + 视频分析控制器
 		aiService := services.NewAIService(services.DefaultAIConfig)
 		videoAnalysisController := controllers.NewVideoAnalysisController(db, aiService)
+		videoAnalysisController.SetNotificationService(notificationService)
 
 		// ========== 设置路由 ==========
 		routes.SetupAuthRoutes(api, authController)

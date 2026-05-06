@@ -64,12 +64,7 @@ func (s *ReportService) GetReportDetail(id uint, userID uint, userRole models.Us
 		return nil, false, nil // 报告不存在
 	}
 
-	// 检查权限：只有购买用户、分析师和管理员可以查看
-	if report.UserID != userID && report.AnalystID != userID && userRole != models.RoleAdmin {
-		return nil, false, nil // 无权限
-	}
-
-	return report, true, nil
+	return report, s.canAccessReport(report, userID, userRole, false), nil
 }
 
 // CheckDownloadPermission 检查下载权限
@@ -82,12 +77,7 @@ func (s *ReportService) CheckDownloadPermission(id uint, userID uint, userRole m
 		return nil, false, nil // 报告不存在
 	}
 
-	// 检查权限：只有购买用户、分析师和管理员可以下载
-	if report.UserID != userID && report.AnalystID != userID && userRole != models.RoleAdmin {
-		return nil, false, nil // 无权限
-	}
-
-	return report, true, nil
+	return report, s.canAccessReport(report, userID, userRole, true), nil
 }
 
 // GetPdfFilePath 获取PDF文件路径
@@ -126,6 +116,30 @@ func (s *ReportService) GetAnalystReports(analystID uint, page, pageSize int) (*
 	return s.reportRepo.FindByAnalystID(analystID, page, pageSize)
 }
 
+func (s *ReportService) canAccessReport(report *models.Report, userID uint, userRole models.UserRole, requireCompleted bool) bool {
+	if userRole == models.RoleAdmin {
+		return true
+	}
+	if s.isReportAnalyst(report, userID) {
+		return !requireCompleted || report.Status == models.ReportStatusCompleted
+	}
+	if report.UserID == userID {
+		return report.Status == models.ReportStatusCompleted
+	}
+	return false
+}
+
+func (s *ReportService) isReportAnalyst(report *models.Report, userID uint) bool {
+	if report.AnalystID == userID {
+		return true
+	}
+	if s.userRepo == nil {
+		return false
+	}
+	analyst, err := s.userRepo.FindAnalystByUserID(userID)
+	return err == nil && analyst != nil && analyst.ID == report.AnalystID
+}
+
 // UpdateReportStatus 更新报告状态
 func (s *ReportService) UpdateReportStatus(id uint, status models.ReportStatus) error {
 	updates := map[string]interface{}{
@@ -153,8 +167,7 @@ func (s *ReportService) RegeneratePdf(id uint, userID uint, userRole models.User
 		return nil, false, nil // 报告不存在
 	}
 
-	// 检查权限：只有分析师本人和管理员可以重新生成
-	if report.AnalystID != userID && userRole != models.RoleAdmin {
+	if !s.isReportAnalyst(report, userID) && userRole != models.RoleAdmin {
 		return nil, false, nil // 无权限
 	}
 

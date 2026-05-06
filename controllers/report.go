@@ -5,25 +5,57 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shaonianqiutan/backend/middleware"
 	"github.com/shaonianqiutan/backend/models"
 	"github.com/shaonianqiutan/backend/services"
 	"github.com/shaonianqiutan/backend/utils"
+	"gorm.io/gorm"
 )
 
 // ReportController 报告控制器
 type ReportController struct {
 	reportService *services.ReportService
 	authService   *services.AuthService
+	analysisRepo  *models.VideoAnalysisRepository
+	highlightRepo *models.AnalysisHighlightRepository
 }
 
-func NewReportController(reportService *services.ReportService, authService *services.AuthService) *ReportController {
-	return &ReportController{
+func NewReportController(reportService *services.ReportService, authService *services.AuthService, dbs ...*gorm.DB) *ReportController {
+	ctrl := &ReportController{
 		reportService: reportService,
 		authService:   authService,
 	}
+	if len(dbs) > 0 && dbs[0] != nil {
+		ctrl.analysisRepo = models.NewVideoAnalysisRepository(dbs[0])
+		ctrl.highlightRepo = models.NewAnalysisHighlightRepository(dbs[0])
+	}
+	return ctrl
+}
+
+type reportHighlightMarker struct {
+	ID              uint                       `json:"id"`
+	AnalysisID      uint                       `json:"analysis_id"`
+	Timestamp       string                     `json:"timestamp"`
+	MarkerType      models.HighlightMarkerType `json:"marker_type"`
+	Mode            models.HighlightMode       `json:"mode"`
+	StartTimeMs     int                        `json:"start_time_ms"`
+	EndTimeMs       *int                       `json:"end_time_ms"`
+	TagType         models.HighlightTagType    `json:"tag_type"`
+	Description     string                     `json:"description"`
+	VideoClipURL    string                     `json:"video_clip_url,omitempty"`
+	ClipStatus      models.HighlightClipStatus `json:"clip_status"`
+	IncludeInReport bool                       `json:"include_in_report"`
+	SortOrder       int                        `json:"sort_order"`
+	CreatedAt       time.Time                  `json:"created_at"`
+}
+
+type reportDetailResponse struct {
+	*models.Report
+	VideoAnalysisID  uint                    `json:"video_analysis_id,omitempty"`
+	HighlightMarkers []reportHighlightMarker `json:"highlight_markers"`
 }
 
 // CreateReport 创建球探报告
@@ -92,7 +124,55 @@ func (ctrl *ReportController) GetReportDetail(c *gin.Context) {
 		return
 	}
 
-	utils.Success(c, "", gin.H{"data": report})
+	highlightMarkers, videoAnalysisID := ctrl.getReportHighlightMarkers(report, user.Role)
+	utils.Success(c, "", gin.H{"data": reportDetailResponse{
+		Report:           report,
+		VideoAnalysisID:  videoAnalysisID,
+		HighlightMarkers: highlightMarkers,
+	}})
+}
+
+func (ctrl *ReportController) getReportHighlightMarkers(report *models.Report, userRole models.UserRole) ([]reportHighlightMarker, uint) {
+	if ctrl.analysisRepo == nil || ctrl.highlightRepo == nil || report == nil || report.OrderID == 0 {
+		return []reportHighlightMarker{}, 0
+	}
+	if report.Status != models.ReportStatusCompleted && userRole == models.RoleUser {
+		return []reportHighlightMarker{}, 0
+	}
+
+	analysis, err := ctrl.analysisRepo.FindByOrderID(report.OrderID)
+	if err != nil || analysis == nil {
+		return []reportHighlightMarker{}, 0
+	}
+	highlights, err := ctrl.highlightRepo.FindIncludedInReport(analysis.ID)
+	if err != nil {
+		return []reportHighlightMarker{}, analysis.ID
+	}
+
+	markers := make([]reportHighlightMarker, 0, len(highlights))
+	for _, highlight := range highlights {
+		videoClipURL := ""
+		if highlight.Mode == models.HighlightModeRange && highlight.ClipStatus == models.HighlightClipReady {
+			videoClipURL = highlight.VideoClipURL
+		}
+		markers = append(markers, reportHighlightMarker{
+			ID:              highlight.ID,
+			AnalysisID:      highlight.AnalysisID,
+			Timestamp:       highlight.Timestamp,
+			MarkerType:      highlight.MarkerType,
+			Mode:            highlight.Mode,
+			StartTimeMs:     highlight.StartTimeMs,
+			EndTimeMs:       highlight.EndTimeMs,
+			TagType:         highlight.TagType,
+			Description:     highlight.Description,
+			VideoClipURL:    videoClipURL,
+			ClipStatus:      highlight.ClipStatus,
+			IncludeInReport: highlight.IncludeInReport,
+			SortOrder:       highlight.SortOrder,
+			CreatedAt:       highlight.CreatedAt,
+		})
+	}
+	return markers, analysis.ID
 }
 
 // DownloadReport 下载PDF报告

@@ -283,9 +283,13 @@ func BuildReportPrompt(analysis *VideoAnalysisReportInput) string {
 
 	// 高光时刻
 	if len(analysis.Highlights) > 0 {
-		sb.WriteString("【高光时刻】\n")
+		sb.WriteString("【关键片段标记】\n")
 		for i, h := range analysis.Highlights {
-			sb.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, h.Timestamp, h.Description))
+			timeText := h.Timestamp
+			if h.Mode == "range" && h.StartTime != "" && h.EndTime != "" {
+				timeText = h.StartTime + "-" + h.EndTime
+			}
+			sb.WriteString(fmt.Sprintf("%d. [%s][%s][%s] %s\n", i+1, timeText, markerTypeLabel(h.MarkerType), tagTypeLabel(h.TagType), h.Description))
 		}
 		sb.WriteString("\n")
 	}
@@ -388,5 +392,43 @@ type ScoreInput struct {
 // HighlightInput 高光时刻输入
 type HighlightInput struct {
 	Timestamp   string `json:"timestamp"`
+	MarkerType  string `json:"marker_type"`
+	Mode        string `json:"mode"`
+	StartTime   string `json:"start_time"`
+	EndTime     string `json:"end_time"`
+	TagType     string `json:"tag_type"`
 	Description string `json:"description"`
+}
+
+func markerTypeLabel(markerType string) string {
+	switch markerType {
+	case "issue":
+		return "待改进问题"
+	case "observation":
+		return "战术观察"
+	default:
+		return "精彩表现"
+	}
+}
+
+func tagTypeLabel(tagType string) string {
+	labels := map[string]string{
+		"goal":              "进球",
+		"assist":            "助攻",
+		"steal":             "抢断",
+		"save":              "扑救",
+		"dribble":           "过人",
+		"pass":              "关键传球",
+		"defense":           "防守关键",
+		"positioning_error": "站位问题",
+		"decision_error":    "决策问题",
+		"turnover":          "失误",
+		"recovery_slow":     "回防不及时",
+		"tactical_note":     "战术观察",
+		"off_ball_run":      "无球跑动",
+	}
+	if label, ok := labels[tagType]; ok {
+		return label
+	}
+	return tagType
 }

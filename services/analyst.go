@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os/exec"
 	"path/filepath"
 	"time"
@@ -14,11 +15,12 @@ import (
 
 // AnalystService 分析师服务
 type AnalystService struct {
-	analystRepo       *models.AnalystRepository
-	orderRepo         *models.OrderRepository
-	userRepo          *models.UserRepository
-	assignmentRepo    *models.OrderAssignmentRepository
-	statusHistoryRepo *models.OrderStatusHistoryRepository
+	analystRepo         *models.AnalystRepository
+	orderRepo           *models.OrderRepository
+	userRepo            *models.UserRepository
+	assignmentRepo      *models.OrderAssignmentRepository
+	statusHistoryRepo   *models.OrderStatusHistoryRepository
+	notificationService *NotificationService
 }
 
 // NewAnalystService 创建分析师服务
@@ -36,6 +38,11 @@ func NewAnalystService(
 		assignmentRepo:    assignmentRepo,
 		statusHistoryRepo: statusHistoryRepo,
 	}
+}
+
+// SetNotificationService 注入通知服务
+func (s *AnalystService) SetNotificationService(notificationService *NotificationService) {
+	s.notificationService = notificationService
 }
 
 // GetAnalystByID 获取分析师详情
@@ -500,7 +507,7 @@ func (s *AnalystService) RejectOrder(analystID, orderID uint, reason string) err
 		"cancel_reason": reason,
 	}
 	now := time.Now()
-	return s.orderRepo.GetDB().Transaction(func(tx *gorm.DB) error {
+	err = s.orderRepo.GetDB().Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&models.Order{}).Where("id = ?", orderID).Updates(updates).Error; err != nil {
 			return err
 		}
@@ -511,6 +518,12 @@ func (s *AnalystService) RejectOrder(analystID, orderID uint, reason string) err
 		}
 		return s.createStatusHistory(tx, orderID, order.Status, models.OrderStatusUploaded, analystID, "analyst", reason)
 	})
+	if err != nil {
+		return err
+	}
+
+	s.notifyAdminsOrderRejected(order, reason)
+	return nil
 }
 
 func (s *AnalystService) createStatusHistory(tx *gorm.DB, orderID uint, fromStatus, toStatus models.OrderStatus, actorID uint, actorRole, reason string) error {
@@ -525,6 +538,54 @@ func (s *AnalystService) createStatusHistory(tx *gorm.DB, orderID uint, fromStat
 		ActorRole:  actorRole,
 		Reason:     reason,
 	})
+}
+
+func (s *AnalystService) notifyAdminsOrderRejected(order *models.Order, reason string) {
+	if s.notificationService == nil || s.userRepo == nil || order == nil {
+		return
+	}
+
+	admins, _, err := s.userRepo.FindByRole(string(models.RoleAdmin), 1, 1000, string(models.StatusActive))
+	if err != nil {
+		log.Printf("[AnalystService] query admins for rejected order notification failed: %v", err)
+		return
+	}
+
+	adminIDs := make([]uint, 0, len(admins))
+	for _, admin := range admins {
+		adminIDs = append(adminIDs, admin.ID)
+	}
+	if len(adminIDs) == 0 {
+		return
+	}
+
+	if err := s.notificationService.NotifyAdminsOrderRejected(adminIDs, order.ID, order.OrderNo, reason); err != nil {
+		log.Printf("[AnalystService] notify admins for rejected order %d failed: %v", order.ID, err)
+	}
+}
+
+func (s *AnalystService) notifyAdminsReportSubmitted(report *models.Report) {
+	if s.notificationService == nil || s.userRepo == nil || report == nil {
+		return
+	}
+
+	admins, _, err := s.userRepo.FindByRole(string(models.RoleAdmin), 1, 1000, string(models.StatusActive))
+	if err != nil {
+		log.Printf("[AnalystService] query admins for report notification failed: %v", err)
+		return
+	}
+
+	adminIDs := make([]uint, 0, len(admins))
+	for _, admin := range admins {
+		adminIDs = append(adminIDs, admin.ID)
+	}
+	if len(adminIDs) == 0 {
+		return
+	}
+
+	if err := s.notificationService.NotifyReportPendingReview(adminIDs, report.ID, report.PlayerName); err != nil {
+		log.Printf("[AnalystService] notify admins for report %d failed: %v", report.ID, err)
+	}
 }
 
 // IncomeDetailItem 收益明细项
@@ -725,7 +786,7 @@ func (s *AnalystService) SubmitReport(analystID, orderID uint, req *SubmitReport
 		Potential:      req.Potential,
 		ClipVideoURL:   req.ClipVideoURL,
 		RatingDetails:  ratingDetailsJSON,
-		Status:         models.ReportStatusCompleted,
+		Status:         models.ReportStatusProcessing,
 	}
 
 	// 生成 MD 文档（失败不阻塞主流程）
@@ -758,25 +819,51 @@ func (s *AnalystService) SubmitReport(analystID, orderID uint, req *SubmitReport
 		}
 	}
 
-	// 使用事务
+	// 使用事务：提交后进入管理员审核，订单仍保持处理中
 	err = s.orderRepo.GetDB().Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(report).Error; err != nil {
+		var existing models.Report
+		findErr := tx.Where("order_id = ?", orderID).First(&existing).Error
+		if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return findErr
+		}
+
+		if findErr == nil {
+			report.ID = existing.ID
+			if err := tx.Model(&models.Report{}).Where("id = ?", existing.ID).Updates(map[string]interface{}{
+				"user_id":          report.UserID,
+				"analyst_id":       report.AnalystID,
+				"player_name":      report.PlayerName,
+				"player_position":  report.PlayerPosition,
+				"content":          report.Content,
+				"overall_rating":   report.OverallRating,
+				"offense_rating":   report.OffenseRating,
+				"defense_rating":   report.DefenseRating,
+				"summary":          report.Summary,
+				"strengths":        report.Strengths,
+				"weaknesses":       report.Weaknesses,
+				"suggestions":      report.Suggestions,
+				"potential":        report.Potential,
+				"clip_video_url":   report.ClipVideoURL,
+				"rating_details":   report.RatingDetails,
+				"rating_report_md": report.RatingReportMD,
+				"player_info_md":   report.PlayerInfoMD,
+				"ai_report_url":    report.AIReportURL,
+				"status":           models.ReportStatusProcessing,
+				"review_remark":    "",
+			}).Error; err != nil {
+				return err
+			}
+		} else if err := tx.Create(report).Error; err != nil {
 			return err
 		}
-		now := time.Now()
-		if err := tx.Model(&models.Order{}).Where("id = ?", orderID).Updates(map[string]interface{}{
-			"status":       models.OrderStatusCompleted,
-			"report_id":    report.ID,
-			"completed_at": &now,
-		}).Error; err != nil {
-			return err
-		}
-		return nil
+
+		return tx.Model(&models.Order{}).Where("id = ?", orderID).Update("report_id", report.ID).Error
 	})
 
 	if err != nil {
 		return fmt.Errorf("提交报告失败: %w", err)
 	}
+	s.notifyAdminsReportSubmitted(report)
 	return nil
 }
 

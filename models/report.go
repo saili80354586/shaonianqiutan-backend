@@ -17,40 +17,41 @@ const (
 
 // Report 球探报告模型
 type Report struct {
-	ID              uint           `json:"id" gorm:"primaryKey"`
-	OrderID         uint           `json:"order_id" gorm:"not null;index"`
-	UserID          uint           `json:"user_id" gorm:"not null;index"`
-	AnalystID       uint           `json:"analyst_id" gorm:"not null;index"`
-	PlayerName      string         `json:"player_name" gorm:"size:50;not null"`
-	PlayerBirthDate string         `json:"player_birth_date" gorm:"size:10"`
-	PlayerPosition  string         `json:"player_position" gorm:"size:50"`
-	PlayerProvince  string         `json:"player_province" gorm:"size:50"`
-	PlayerCity      string         `json:"player_city" gorm:"size:50"`
-	Content         string         `json:"content" gorm:"type:text;not null"`
-	PdfURL          string         `json:"pdf_url" gorm:"size:255"`
-	Status          ReportStatus   `json:"status" gorm:"size:20;default:'processing'"`
+	ID              uint         `json:"id" gorm:"primaryKey"`
+	OrderID         uint         `json:"order_id" gorm:"not null;index"`
+	UserID          uint         `json:"user_id" gorm:"not null;index"`
+	AnalystID       uint         `json:"analyst_id" gorm:"not null;index"`
+	PlayerName      string       `json:"player_name" gorm:"size:50;not null"`
+	PlayerBirthDate string       `json:"player_birth_date" gorm:"size:10"`
+	PlayerPosition  string       `json:"player_position" gorm:"size:50"`
+	PlayerProvince  string       `json:"player_province" gorm:"size:50"`
+	PlayerCity      string       `json:"player_city" gorm:"size:50"`
+	Content         string       `json:"content" gorm:"type:text;not null"`
+	PdfURL          string       `json:"pdf_url" gorm:"size:255"`
+	Status          ReportStatus `json:"status" gorm:"size:20;default:'processing'"`
+	ReviewRemark    string       `json:"review_remark" gorm:"type:text"`
 
 	// ===== 新增：评分结构化字段 =====
 	OverallRating float64 `json:"overall_rating" gorm:"type:decimal(3,1)"`
 	OffenseRating float64 `json:"offense_rating" gorm:"type:decimal(3,1)"`
 	DefenseRating float64 `json:"defense_rating" gorm:"type:decimal(3,1)"`
 	Summary       string  `json:"summary" gorm:"type:text"`
-	Strengths     string  `json:"strengths" gorm:"type:text"`      // JSON 数组
-	Weaknesses    string  `json:"weaknesses" gorm:"type:text"`     // JSON 数组
+	Strengths     string  `json:"strengths" gorm:"type:text"`  // JSON 数组
+	Weaknesses    string  `json:"weaknesses" gorm:"type:text"` // JSON 数组
 	Suggestions   string  `json:"suggestions" gorm:"type:text"`
-	Potential     string  `json:"potential" gorm:"size:20"`        // top | high | medium | low
-	ClipVideoURL  string  `json:"clip_video_url" gorm:"size:500"`  // 视频版剪辑地址
+	Potential     string  `json:"potential" gorm:"size:20"`       // top | high | medium | low
+	ClipVideoURL  string  `json:"clip_video_url" gorm:"size:500"` // 视频版剪辑地址
 
 	// ===== 新增：19 项评分明细（统一 JSON 存储）=====
 	RatingDetails string `json:"rating_details" gorm:"type:text"` // JSON 对象
 
 	// ===== 新增：MD 文档路径 =====
-	RatingReportMD   string `json:"rating_report_md" gorm:"size:500"`    // 球员评分报告 MD 文件路径
-	PlayerInfoMD     string `json:"player_info_md" gorm:"size:500"`     // 球员基础信息 MD 文件路径
+	RatingReportMD string `json:"rating_report_md" gorm:"size:500"` // 球员评分报告 MD 文件路径
+	PlayerInfoMD   string `json:"player_info_md" gorm:"size:500"`   // 球员基础信息 MD 文件路径
 
 	// ===== 新增：AI 生成报告路径 =====
-	AIReportURL   string `json:"ai_report_url" gorm:"size:500"`   // AI 生成的 Word 报告 URL
-	AIVideoURL    string `json:"ai_video_url" gorm:"size:500"`   // AI 生成的视频分析 URL
+	AIReportURL string `json:"ai_report_url" gorm:"size:500"` // AI 生成的 Word 报告 URL
+	AIVideoURL  string `json:"ai_video_url" gorm:"size:500"`  // AI 生成的视频分析 URL
 
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
@@ -117,7 +118,7 @@ func (r *ReportRepository) FindByUserID(userID uint, page, pageSize int) (*Repor
 
 	offset := (page - 1) * pageSize
 
-	query := r.db.Model(&Report{}).Where("user_id = ?", userID)
+	query := r.db.Model(&Report{}).Where("user_id = ? AND status = ?", userID, ReportStatusCompleted)
 	var total int64
 	query.Count(&total)
 
@@ -163,7 +164,7 @@ func (r *ReportRepository) FindByStatus(status ReportStatus, page, pageSize int)
 	var reports []Report
 	var total int64
 
-	query := r.db.Where("status = ?", status).Order("created_at DESC")
+	query := r.db.Model(&Report{}).Where("status = ?", status).Order("created_at DESC")
 	query.Count(&total)
 
 	offset := (page - 1) * pageSize

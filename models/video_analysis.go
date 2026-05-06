@@ -20,40 +20,40 @@ type RatingDimension struct {
 // 分为三大类：整体表现(4) + 进攻能力(8) + 防守能力(8)
 type VideoAnalysisScores struct {
 	// ===== 整体表现 (Overall) =====
-	BallControl        RatingDimension `json:"ball_control"`         // 控球能力
-	OffBallMovement    RatingDimension `json:"off_ball_movement"`     // 无球跑动
-	PressingAwareness  RatingDimension `json:"pressing_awareness"`   // 逼抢意识
-	Positioning        RatingDimension `json:"positioning"`          // 站位/选位
+	BallControl       RatingDimension `json:"ball_control"`       // 控球能力
+	OffBallMovement   RatingDimension `json:"off_ball_movement"`  // 无球跑动
+	PressingAwareness RatingDimension `json:"pressing_awareness"` // 逼抢意识
+	Positioning       RatingDimension `json:"positioning"`        // 站位/选位
 
 	// ===== 进攻能力 (Offense) =====
-	WidthParticipation RatingDimension `json:"width_participation"`  // 拉开宽度参与
-	OffBallSupport     RatingDimension `json:"off_ball_support"`     // 无球支援
-	OneVOne            RatingDimension `json:"one_v_one"`            // 1v1过人能力
-	CrossingAssist     RatingDimension `json:"crossing_assist"`      // 传中/助攻
-	CombatAbility      RatingDimension `json:"combat_ability"`       // 对抗能力
+	WidthParticipation RatingDimension `json:"width_participation"` // 拉开宽度参与
+	OffBallSupport     RatingDimension `json:"off_ball_support"`    // 无球支援
+	OneVOne            RatingDimension `json:"one_v_one"`           // 1v1过人能力
+	CrossingAssist     RatingDimension `json:"crossing_assist"`     // 传中/助攻
+	CombatAbility      RatingDimension `json:"combat_ability"`      // 对抗能力
 	PaceRhythm         RatingDimension `json:"pace_rhythm"`         // 节奏把控
-	PassVision         RatingDimension `json:"pass_vision"`          // 传球视野
-	BodyPosture        RatingDimension `json:"body_posture"`         // 身体姿态
+	PassVision         RatingDimension `json:"pass_vision"`         // 传球视野
+	BodyPosture        RatingDimension `json:"body_posture"`        // 身体姿态
 
 	// ===== 防守能力 (Defense) =====
-	DefensiveCommitment RatingDimension `json:"defensive_commitment"` // 防守投入度
-	LossRecovery        RatingDimension `json:"loss_recovery"`         // 丢球回追
+	DefensiveCommitment  RatingDimension `json:"defensive_commitment"`  // 防守投入度
+	LossRecovery         RatingDimension `json:"loss_recovery"`         // 丢球回追
 	TeammateCoordination RatingDimension `json:"teammate_coordination"` // 队友协防配合
-	SecondBall          RatingDimension `json:"second_ball"`           // 二点球争抢
-	AerialDuel          RatingDimension `json:"aerial_duel"`           // 空中争顶
-	DefensiveShape      RatingDimension `json:"defensive_shape"`       // 防守阵型保持
-	RoleAdjustment      RatingDimension `json:"role_adjustment"`       // 角色调整能力
-	DefensiveRhythm     RatingDimension `json:"defensive_rhythm"`      // 防守节奏
+	SecondBall           RatingDimension `json:"second_ball"`           // 二点球争抢
+	AerialDuel           RatingDimension `json:"aerial_duel"`           // 空中争顶
+	DefensiveShape       RatingDimension `json:"defensive_shape"`       // 防守阵型保持
+	RoleAdjustment       RatingDimension `json:"role_adjustment"`       // 角色调整能力
+	DefensiveRhythm      RatingDimension `json:"defensive_rhythm"`      // 防守节奏
 }
 
 // NewDefaultScores 创建默认评分（7分制）
 func NewDefaultScores() *VideoAnalysisScores {
 	return &VideoAnalysisScores{
 		// 整体表现
-		BallControl:        RatingDimension{Score: 7.0, Weight: 0.05, Comment: ""},
-		OffBallMovement:    RatingDimension{Score: 7.0, Weight: 0.05, Comment: ""},
-		PressingAwareness:  RatingDimension{Score: 7.0, Weight: 0.05, Comment: ""},
-		Positioning:        RatingDimension{Score: 7.0, Weight: 0.05, Comment: ""},
+		BallControl:       RatingDimension{Score: 7.0, Weight: 0.05, Comment: ""},
+		OffBallMovement:   RatingDimension{Score: 7.0, Weight: 0.05, Comment: ""},
+		PressingAwareness: RatingDimension{Score: 7.0, Weight: 0.05, Comment: ""},
+		Positioning:       RatingDimension{Score: 7.0, Weight: 0.05, Comment: ""},
 		// 进攻能力
 		WidthParticipation: RatingDimension{Score: 7.0, Weight: 0.05, Comment: ""},
 		OffBallSupport:     RatingDimension{Score: 7.0, Weight: 0.05, Comment: ""},
@@ -304,82 +304,113 @@ func GetPotentialLevel(score float64) PotentialLevel {
 type HighlightTagType string
 
 const (
-	HighlightGoal   HighlightTagType = "goal"   // 进球
-	HighlightAssist HighlightTagType = "assist" // 助攻
-	HighlightSteal  HighlightTagType = "steal"  // 抢断
-	HighlightSave   HighlightTagType = "save"  // 扑救
-	HighlightDribble HighlightTagType = "dribble" // 过人
-	HighlightPass   HighlightTagType = "pass"   // 关键传球
-	HighlightDefense HighlightTagType = "defense" // 防守关键
+	HighlightGoal             HighlightTagType = "goal"              // 进球
+	HighlightAssist           HighlightTagType = "assist"            // 助攻
+	HighlightSteal            HighlightTagType = "steal"             // 抢断
+	HighlightSave             HighlightTagType = "save"              // 扑救
+	HighlightDribble          HighlightTagType = "dribble"           // 过人
+	HighlightPass             HighlightTagType = "pass"              // 关键传球
+	HighlightDefense          HighlightTagType = "defense"           // 防守关键
+	HighlightPositioningError HighlightTagType = "positioning_error" // 站位问题
+	HighlightDecisionError    HighlightTagType = "decision_error"    // 决策问题
+	HighlightTurnover         HighlightTagType = "turnover"          // 失误
+	HighlightRecoverySlow     HighlightTagType = "recovery_slow"     // 回防不及时
+	HighlightTacticalNote     HighlightTagType = "tactical_note"     // 战术观察
+	HighlightOffBallRun       HighlightTagType = "off_ball_run"      // 无球跑动
+)
+
+type HighlightMarkerType string
+
+const (
+	HighlightMarkerHighlight   HighlightMarkerType = "highlight"   // 精彩表现
+	HighlightMarkerIssue       HighlightMarkerType = "issue"       // 待改进问题
+	HighlightMarkerObservation HighlightMarkerType = "observation" // 战术观察
+)
+
+type HighlightMode string
+
+const (
+	HighlightModePoint HighlightMode = "point" // 单点
+	HighlightModeRange HighlightMode = "range" // 时间段
+)
+
+type HighlightClipStatus string
+
+const (
+	HighlightClipNone       HighlightClipStatus = "none"       // 未生成
+	HighlightClipQueued     HighlightClipStatus = "queued"     // 已排队
+	HighlightClipProcessing HighlightClipStatus = "processing" // 处理中
+	HighlightClipReady      HighlightClipStatus = "ready"      // 已生成
+	HighlightClipFailed     HighlightClipStatus = "failed"     // 生成失败
 )
 
 // ========== VideoAnalysis 主分析表 ==========
 type VideoAnalysisStatus string
 
 const (
-	AnalysisStatusScoring  VideoAnalysisStatus = "scoring"  // 评分中
-	AnalysisStatusDraft    VideoAnalysisStatus = "draft"    // 草稿
+	AnalysisStatusScoring    VideoAnalysisStatus = "scoring"    // 评分中
+	AnalysisStatusDraft      VideoAnalysisStatus = "draft"      // 草稿
 	AnalysisStatusGenerating VideoAnalysisStatus = "generating" // AI生成中
-	AnalysisStatusCompleted VideoAnalysisStatus = "completed" // 已完成
-	AnalysisStatusSubmitted VideoAnalysisStatus = "submitted" // 已提交
+	AnalysisStatusCompleted  VideoAnalysisStatus = "completed"  // 已完成
+	AnalysisStatusSubmitted  VideoAnalysisStatus = "submitted"  // 已提交
 )
 
 // VideoAnalysis 视频分析模型
 type VideoAnalysis struct {
-	ID            uint                `json:"id" gorm:"primaryKey"`
-	OrderID       uint                `json:"order_id" gorm:"uniqueIndex;not null"`
-	AnalystID     uint                `json:"analyst_id" gorm:"index;not null"`
-	UserID        uint                `json:"user_id" gorm:"index;not null"` // 球员用户ID
+	ID        uint `json:"id" gorm:"primaryKey"`
+	OrderID   uint `json:"order_id" gorm:"uniqueIndex;not null"`
+	AnalystID uint `json:"analyst_id" gorm:"index;not null"`
+	UserID    uint `json:"user_id" gorm:"index;not null"` // 球员用户ID
 
 	// 球员基本信息
-	PlayerName    string              `json:"player_name" gorm:"size:50"`
-	PlayerAge     int                 `json:"player_age"`
-	PlayerPosition string             `json:"player_position" gorm:"size:20"`
-	PlayerFoot    string              `json:"player_foot" gorm:"size:10"` // 惯用脚
-	PlayerHeight  float64             `json:"player_height"`
-	PlayerWeight  float64             `json:"player_weight"`
-	PlayerTeam    string              `json:"player_team" gorm:"size:100"`
+	PlayerName     string  `json:"player_name" gorm:"size:50"`
+	PlayerAge      int     `json:"player_age"`
+	PlayerPosition string  `json:"player_position" gorm:"size:20"`
+	PlayerFoot     string  `json:"player_foot" gorm:"size:10"` // 惯用脚
+	PlayerHeight   float64 `json:"player_height"`
+	PlayerWeight   float64 `json:"player_weight"`
+	PlayerTeam     string  `json:"player_team" gorm:"size:100"`
 
 	// 比赛信息
-	MatchName     string              `json:"match_name" gorm:"size:200"`
-	MatchDate     string              `json:"match_date" gorm:"size:10"`
-	MatchType     string              `json:"match_type" gorm:"size:50"` // 正式比赛/友谊赛
-	OpponentLevel string              `json:"opponent_level" gorm:"size:20"` // 对手实力
-	Opponent      string              `json:"opponent" gorm:"size:100"`
-	PlayTime      int                 `json:"play_time"` // 出场时间(分钟)
-	Goals         int                 `json:"goals"`
-	Assists       int                 `json:"assists"`
+	MatchName     string `json:"match_name" gorm:"size:200"`
+	MatchDate     string `json:"match_date" gorm:"size:10"`
+	MatchType     string `json:"match_type" gorm:"size:50"`     // 正式比赛/友谊赛
+	OpponentLevel string `json:"opponent_level" gorm:"size:20"` // 对手实力
+	Opponent      string `json:"opponent" gorm:"size:100"`
+	PlayTime      int    `json:"play_time"` // 出场时间(分钟)
+	Goals         int    `json:"goals"`
+	Assists       int    `json:"assists"`
 
 	// 视频信息
-	VideoURL      string              `json:"video_url" gorm:"size:500"`
+	VideoURL string `json:"video_url" gorm:"size:500"`
 
 	// ========== 核心评分数据 ==========
 	// 综合评分（1-100）
-	OverallScore  float64             `json:"overall_score"`
+	OverallScore float64 `json:"overall_score"`
 	// 潜力等级
-	PotentialLevel PotentialLevel     `json:"potential_level" gorm:"size:1"`
+	PotentialLevel PotentialLevel `json:"potential_level" gorm:"size:1"`
 	// 10项评分JSON
-	Scores        string              `json:"scores" gorm:"type:text"`
+	Scores string `json:"scores" gorm:"type:text"`
 
 	// ========== 摘要与建议 ==========
-	Summary       string              `json:"summary" gorm:"type:text"`        // 综合评价摘要
-	Improvements  string              `json:"improvements" gorm:"type:text"`   // 重点改进建议
-	AnalystNotes  string              `json:"analyst_notes" gorm:"type:text"`   // 分析师补充说明
+	Summary      string `json:"summary" gorm:"type:text"`       // 综合评价摘要
+	Improvements string `json:"improvements" gorm:"type:text"`  // 重点改进建议
+	AnalystNotes string `json:"analyst_notes" gorm:"type:text"` // 分析师补充说明
 
 	// ========== AI生成报告 ==========
-	AIReport      string              `json:"ai_report" gorm:"type:longtext"`  // AI生成的完整报告
-	AIReportStatus string             `json:"ai_report_status" gorm:"size:20"` // draft/regenerating/confirmed
-	AIReportVersion int               `json:"ai_report_version"` // 报告版本号（用于追踪修改）
+	AIReport        string `json:"ai_report" gorm:"type:longtext"`  // AI生成的完整报告
+	AIReportStatus  string `json:"ai_report_status" gorm:"size:20"` // draft/regenerating/confirmed
+	AIReportVersion int    `json:"ai_report_version"`               // 报告版本号（用于追踪修改）
 
 	// ========== 状态与时间 ==========
-	Status        VideoAnalysisStatus `json:"status" gorm:"size:20;default:'scoring'"`
-	CreatedAt     time.Time           `json:"created_at"`
-	UpdatedAt     time.Time           `json:"updated_at"`
-	DeletedAt     gorm.DeletedAt      `json:"-" gorm:"index"`
+	Status    VideoAnalysisStatus `json:"status" gorm:"size:20;default:'scoring'"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
+	DeletedAt gorm.DeletedAt      `json:"-" gorm:"index"`
 
 	// MD 文档路径（GORM 列名自动映射 snake_case）
 	RatingReportMD string `json:"rating_report_md" gorm:"column:rating_report_md"` // 评分报告 MD 路径
-	PlayerInfoMD   string `json:"player_info_md" gorm:"column:player_info_md"`   // 球员基础信息 MD 路径
+	PlayerInfoMD   string `json:"player_info_md" gorm:"column:player_info_md"`     // 球员基础信息 MD 路径
 }
 
 // TableName 表名
@@ -389,16 +420,24 @@ func (VideoAnalysis) TableName() string {
 
 // ========== AnalysisHighlight 高光时刻表 ==========
 type AnalysisHighlight struct {
-	ID              uint             `json:"id" gorm:"primaryKey"`
-	AnalysisID      uint             `json:"analysis_id" gorm:"index;not null"`
-	Timestamp       string           `json:"timestamp" gorm:"size:10"` // 时间点 "12:30"
-	TagType         HighlightTagType `json:"tag_type" gorm:"size:20"`  // 标签类型
-	Description     string           `json:"description" gorm:"type:text"` // 描述
-	VideoClipURL    string           `json:"video_clip_url" gorm:"size:500"` // 视频片段URL
-	IncludeInReport bool             `json:"include_in_report" gorm:"default:true"` // 是否包含在报告中
-	SortOrder       int              `json:"sort_order" gorm:"default:0"` // 排序
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
+	ID              uint                `json:"id" gorm:"primaryKey"`
+	AnalysisID      uint                `json:"analysis_id" gorm:"index;not null"`
+	Timestamp       string              `json:"timestamp" gorm:"size:32"`                       // 展示时间 "12:30" 或 "12:30-12:45"
+	MarkerType      HighlightMarkerType `json:"marker_type" gorm:"size:20;default:'highlight'"` // 标记类型
+	Mode            HighlightMode       `json:"mode" gorm:"size:10;default:'point'"`            // 单点/时间段
+	StartTimeMs     int                 `json:"start_time_ms" gorm:"default:0"`                 // 开始时间（毫秒）
+	EndTimeMs       *int                `json:"end_time_ms"`                                    // 结束时间（毫秒）
+	TagType         HighlightTagType    `json:"tag_type" gorm:"size:20"`                        // 标签类型
+	Description     string              `json:"description" gorm:"type:text"`                   // 描述
+	VideoClipURL    string              `json:"video_clip_url" gorm:"size:500"`                 // 视频片段URL
+	ClipStatus      HighlightClipStatus `json:"clip_status" gorm:"size:20;default:'none'"`      // 剪辑状态
+	ClipError       string              `json:"clip_error" gorm:"type:text"`                    // 剪辑失败原因
+	ClipVersion     int                 `json:"clip_version" gorm:"default:0"`                  // 剪辑版本
+	ClipGeneratedAt *time.Time          `json:"clip_generated_at"`                              // 剪辑生成时间
+	IncludeInReport bool                `json:"include_in_report" gorm:"default:true"`          // 是否包含在报告中
+	SortOrder       int                 `json:"sort_order" gorm:"default:0"`                    // 排序
+	CreatedAt       time.Time           `json:"created_at"`
+	UpdatedAt       time.Time           `json:"updated_at"`
 }
 
 // TableName 表名
@@ -469,7 +508,7 @@ func (r *VideoAnalysisRepository) FindByUserID(userID uint, page, pageSize int) 
 	var analyses []VideoAnalysis
 	var total int64
 
-	query := r.db.Model(&VideoAnalysis{}).Where("user_id = ?", userID).Where("status IN ?", []VideoAnalysisStatus{AnalysisStatusCompleted, AnalysisStatusSubmitted})
+	query := r.db.Model(&VideoAnalysis{}).Where("user_id = ?", userID).Where("status = ?", AnalysisStatusCompleted)
 	query.Count(&total)
 
 	offset := (page - 1) * pageSize
@@ -501,12 +540,28 @@ func NewAnalysisHighlightRepository(db *gorm.DB) *AnalysisHighlightRepository {
 
 // Create 创建高光记录
 func (r *AnalysisHighlightRepository) Create(highlight *AnalysisHighlight) error {
-	return r.db.Create(highlight).Error
+	if err := r.db.Create(highlight).Error; err != nil {
+		return err
+	}
+	if !highlight.IncludeInReport {
+		return r.db.Model(&AnalysisHighlight{}).Where("id = ?", highlight.ID).Update("include_in_report", false).Error
+	}
+	return nil
 }
 
 // BatchCreate 批量创建
 func (r *AnalysisHighlightRepository) BatchCreate(highlights []AnalysisHighlight) error {
-	return r.db.Create(&highlights).Error
+	if err := r.db.Create(&highlights).Error; err != nil {
+		return err
+	}
+	for _, highlight := range highlights {
+		if !highlight.IncludeInReport {
+			if err := r.db.Model(&AnalysisHighlight{}).Where("id = ?", highlight.ID).Update("include_in_report", false).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // Delete 删除高光
@@ -519,17 +574,30 @@ func (r *AnalysisHighlightRepository) DeleteByAnalysisID(analysisID uint) error 
 	return r.db.Where("analysis_id = ?", analysisID).Delete(&AnalysisHighlight{}).Error
 }
 
+// FindByID 根据ID查询高光
+func (r *AnalysisHighlightRepository) FindByID(id uint) (*AnalysisHighlight, error) {
+	var highlight AnalysisHighlight
+	err := r.db.First(&highlight, id).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &highlight, nil
+}
+
 // FindByAnalysisID 查询某分析的所有高光
 func (r *AnalysisHighlightRepository) FindByAnalysisID(analysisID uint) ([]AnalysisHighlight, error) {
 	var highlights []AnalysisHighlight
-	err := r.db.Where("analysis_id = ?", analysisID).Order("timestamp ASC").Find(&highlights).Error
+	err := r.db.Where("analysis_id = ?", analysisID).Order("start_time_ms ASC, timestamp ASC").Find(&highlights).Error
 	return highlights, err
 }
 
 // FindIncludedInReport 查询包含在报告中的高光
 func (r *AnalysisHighlightRepository) FindIncludedInReport(analysisID uint) ([]AnalysisHighlight, error) {
 	var highlights []AnalysisHighlight
-	err := r.db.Where("analysis_id = ? AND include_in_report = ?", analysisID, true).Order("timestamp ASC").Find(&highlights).Error
+	err := r.db.Where("analysis_id = ? AND include_in_report = ?", analysisID, true).Order("start_time_ms ASC, timestamp ASC").Find(&highlights).Error
 	return highlights, err
 }
 
