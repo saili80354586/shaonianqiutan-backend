@@ -436,7 +436,7 @@ func (ctrl *AnalystController) SubmitReport(c *gin.Context) {
 		return
 	}
 
-	utils.Success(c, "报告提交成功", nil)
+	utils.Success(c, "报告已提交审核", nil)
 }
 
 // DownloadReportDoc 下载报告 MD 文档

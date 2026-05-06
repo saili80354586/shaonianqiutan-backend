@@ -296,7 +296,7 @@ func (ctrl *AdminController) ReviewReport(c *gin.Context) {
 		return
 	}
 
-	err = ctrl.adminService.ReviewReport(uint(id), req.Status, req.Remark)
+	err = ctrl.adminService.ReviewReport(uint(id), req.Status, req.Remark, c.GetUint("userId"))
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "审核失败: "+err.Error())
 		return

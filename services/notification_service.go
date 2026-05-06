@@ -135,6 +135,90 @@ func (s *NotificationService) CreateBatchNotifications(userIDs []uint, notificat
 	return nil
 }
 
+// NotifyAnalystOrderAssigned 通知分析师有新订单待接单
+func (s *NotificationService) NotifyAnalystOrderAssigned(analystUserID, orderID uint, orderNo, playerName string) error {
+	title := "新订单已分配"
+	content := "订单 " + orderNo + " 已分配给你，请及时接单"
+	if playerName != "" {
+		content = "球员 " + playerName + " 的订单 " + orderNo + " 已分配给你，请及时接单"
+	}
+	data := &models.NotificationData{
+		TargetType: "order",
+		TargetID:   orderID,
+		Link:       "/analyst/dashboard",
+	}
+	_, err := s.CreateNotification(analystUserID, models.NotificationTypeOrder, title, content, data)
+	return err
+}
+
+// NotifyAdminsOrderRejected 通知管理员分析师拒单
+func (s *NotificationService) NotifyAdminsOrderRejected(adminUserIDs []uint, orderID uint, orderNo, reason string) error {
+	title := "分析师拒绝订单"
+	content := "订单 " + orderNo + " 已被分析师拒绝，请重新派单"
+	if reason != "" {
+		content += "，原因：" + reason
+	}
+	data := &models.NotificationData{
+		TargetType: "order",
+		TargetID:   orderID,
+		Link:       "/admin/orders",
+	}
+	return s.CreateBatchNotifications(adminUserIDs, models.NotificationTypeOrder, title, content, data)
+}
+
+// NotifyReportPendingReview 通知管理员有报告待审核
+func (s *NotificationService) NotifyReportPendingReview(adminUserIDs []uint, reportID uint, playerName string) error {
+	title := "报告待审核"
+	content := "有一份新分析报告等待审核"
+	if playerName != "" {
+		content = "球员 " + playerName + " 的分析报告等待审核"
+	}
+	data := &models.NotificationData{
+		TargetType: "report",
+		TargetID:   reportID,
+		ReportID:   reportID,
+		Link:       "/admin/reports",
+	}
+	return s.CreateBatchNotifications(adminUserIDs, models.NotificationTypeReport, title, content, data)
+}
+
+// NotifyReportCompleted 通知用户报告已通过审核
+func (s *NotificationService) NotifyReportCompleted(playerUserID, reportID uint, playerName string) error {
+	title := "球探报告已完成"
+	content := "你的球探报告已审核完成，可以查看了"
+	if playerName != "" {
+		content = "球员 " + playerName + " 的球探报告已审核完成，可以查看了"
+	}
+	data := &models.NotificationData{
+		TargetType: "report",
+		TargetID:   reportID,
+		ReportID:   reportID,
+		Link:       "/reports/" + itoa(int(reportID)),
+	}
+	_, err := s.CreateNotification(playerUserID, models.NotificationTypeReport, title, content, data)
+	return err
+}
+
+// NotifyAnalystReportRejected 通知分析师报告被退回
+func (s *NotificationService) NotifyAnalystReportRejected(analystUserID, reportID uint, playerName, remark string) error {
+	title := "报告被退回"
+	content := "你提交的分析报告未通过审核，请修改后重新提交"
+	if playerName != "" {
+		content = "球员 " + playerName + " 的分析报告未通过审核，请修改后重新提交"
+	}
+	if remark != "" {
+		content += "，原因：" + remark
+	}
+	data := &models.NotificationData{
+		TargetType: "report",
+		TargetID:   reportID,
+		ReportID:   reportID,
+		Link:       "/analyst/dashboard",
+	}
+	_, err := s.CreateNotification(analystUserID, models.NotificationTypeReport, title, content, data)
+	return err
+}
+
 // NotifyWeeklyReportCreated 通知球员教练发起了周报
 func (s *NotificationService) NotifyWeeklyReportCreated(playerID uint, coachName, teamName, weekLabel string, reportID uint) error {
 	title := "教练发起了本周周报"

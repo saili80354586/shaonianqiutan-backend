@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -13,20 +14,21 @@ import (
 
 // AdminService 管理后台服务
 type AdminService struct {
-	userRepo          *models.UserRepository
-	reportRepo        *models.ReportRepository
-	orderRepo         *models.OrderRepository
-	analystRepo       *models.AnalystRepository
-	applicationRepo   *models.AnalystApplicationRepository
-	contentReportRepo *models.ContentReportRepository
-	sensitiveWordRepo *models.SensitiveWordRepository
-	platformAnnRepo   *models.PlatformAnnouncementRepository
-	bannerRepo        *models.BannerRepository
-	faqRepo           *models.FAQRepository
-	loginLogRepo      *models.LoginLogRepository
-	videoAnalysisRepo *models.VideoAnalysisRepository
-	assignmentRepo    *models.OrderAssignmentRepository
-	statusHistoryRepo *models.OrderStatusHistoryRepository
+	userRepo            *models.UserRepository
+	reportRepo          *models.ReportRepository
+	orderRepo           *models.OrderRepository
+	analystRepo         *models.AnalystRepository
+	applicationRepo     *models.AnalystApplicationRepository
+	contentReportRepo   *models.ContentReportRepository
+	sensitiveWordRepo   *models.SensitiveWordRepository
+	platformAnnRepo     *models.PlatformAnnouncementRepository
+	bannerRepo          *models.BannerRepository
+	faqRepo             *models.FAQRepository
+	loginLogRepo        *models.LoginLogRepository
+	videoAnalysisRepo   *models.VideoAnalysisRepository
+	assignmentRepo      *models.OrderAssignmentRepository
+	statusHistoryRepo   *models.OrderStatusHistoryRepository
+	notificationService *NotificationService
 }
 
 // NewAdminService 创建管理后台服务
@@ -62,6 +64,11 @@ func NewAdminService(
 		assignmentRepo:    assignmentRepo,
 		statusHistoryRepo: statusHistoryRepo,
 	}
+}
+
+// SetNotificationService 注入通知服务
+func (s *AdminService) SetNotificationService(notificationService *NotificationService) {
+	s.notificationService = notificationService
 }
 
 // ========== Dashboard Stats ==========
@@ -248,18 +255,85 @@ func (s *AdminService) DeleteUser(userID uint) error {
 
 // GetPendingReports 获取待审核报告列表
 func (s *AdminService) GetPendingReports(page, pageSize int) ([]models.Report, int64, error) {
-	return s.reportRepo.FindByStatus(models.ReportStatusProcessing, page, pageSize)
+	reports, total, err := s.reportRepo.FindByStatus(models.ReportStatusProcessing, page, pageSize)
+	if err != nil {
+		log.Printf("[AdminService] get pending reports failed: %v", err)
+	}
+	return reports, total, err
 }
 
 // ReviewReport 审核报告
-func (s *AdminService) ReviewReport(reportID uint, status models.ReportStatus, remark string) error {
-	updates := map[string]interface{}{
-		"status": status,
+func (s *AdminService) ReviewReport(reportID uint, status models.ReportStatus, remark string, adminID uint) error {
+	report, err := s.reportRepo.FindByID(reportID)
+	if err != nil {
+		return err
 	}
-	if remark != "" {
-		updates["review_remark"] = remark
+	if report == nil {
+		return errors.New("报告不存在")
 	}
-	return s.reportRepo.Update(reportID, updates)
+
+	order, err := s.orderRepo.FindByID(report.OrderID)
+	if err != nil {
+		return err
+	}
+	if order == nil {
+		return errors.New("订单不存在")
+	}
+
+	now := time.Now()
+	err = s.orderRepo.GetDB().Transaction(func(tx *gorm.DB) error {
+		updates := map[string]interface{}{
+			"status": status,
+		}
+		if remark != "" || status == models.ReportStatusFailed {
+			updates["review_remark"] = remark
+		}
+		if err := tx.Model(&models.Report{}).Where("id = ?", reportID).Updates(updates).Error; err != nil {
+			return err
+		}
+
+		switch status {
+		case models.ReportStatusCompleted:
+			if err := tx.Model(&models.Order{}).Where("id = ?", report.OrderID).Updates(map[string]interface{}{
+				"status":       models.OrderStatusCompleted,
+				"report_id":    report.ID,
+				"completed_at": &now,
+			}).Error; err != nil {
+				return err
+			}
+			if s.videoAnalysisRepo != nil {
+				if err := tx.Model(&models.VideoAnalysis{}).Where("order_id = ?", report.OrderID).Updates(map[string]interface{}{
+					"status":           models.AnalysisStatusCompleted,
+					"ai_report_status": "confirmed",
+				}).Error; err != nil {
+					return err
+				}
+			}
+			if err := s.createStatusHistory(tx, report.OrderID, order.Status, models.OrderStatusCompleted, adminID, "admin", "管理员审核通过报告"); err != nil {
+				return err
+			}
+		case models.ReportStatusFailed:
+			if s.videoAnalysisRepo != nil {
+				if err := tx.Model(&models.VideoAnalysis{}).Where("order_id = ?", report.OrderID).Updates(map[string]interface{}{
+					"status":           models.AnalysisStatusDraft,
+					"ai_report_status": "draft",
+				}).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	if status == models.ReportStatusCompleted {
+		s.notifyReportCompleted(report)
+	} else if status == models.ReportStatusFailed {
+		s.notifyAnalystReportRejected(report, remark)
+	}
+	return nil
 }
 
 // GetReportByID 获取报告详情
@@ -391,7 +465,12 @@ func (s *AdminService) AssignOrder(orderID, analystID, adminID uint) (*models.Or
 		return nil, err
 	}
 
-	return s.orderRepo.FindByID(orderID)
+	assignedOrder, err := s.orderRepo.FindByID(orderID)
+	if err != nil {
+		return nil, err
+	}
+	s.notifyAnalystOrderAssigned(analyst, assignedOrder)
+	return assignedOrder, nil
 }
 
 // GetAssignmentRecords 获取订单派发历史
@@ -419,6 +498,40 @@ func (s *AdminService) createStatusHistory(tx *gorm.DB, orderID uint, fromStatus
 		ActorRole:  actorRole,
 		Reason:     reason,
 	})
+}
+
+func (s *AdminService) notifyAnalystOrderAssigned(analyst *models.Analyst, order *models.Order) {
+	if s.notificationService == nil || analyst == nil || order == nil {
+		return
+	}
+	if err := s.notificationService.NotifyAnalystOrderAssigned(analyst.UserID, order.ID, order.OrderNo, order.PlayerName); err != nil {
+		log.Printf("[AdminService] notify analyst %d for order %d failed: %v", analyst.ID, order.ID, err)
+	}
+}
+
+func (s *AdminService) notifyReportCompleted(report *models.Report) {
+	if s.notificationService == nil || report == nil {
+		return
+	}
+	if err := s.notificationService.NotifyReportCompleted(report.UserID, report.ID, report.PlayerName); err != nil {
+		log.Printf("[AdminService] notify player %d for report %d failed: %v", report.UserID, report.ID, err)
+	}
+}
+
+func (s *AdminService) notifyAnalystReportRejected(report *models.Report, remark string) {
+	if s.notificationService == nil || s.analystRepo == nil || report == nil {
+		return
+	}
+	analyst, err := s.analystRepo.FindByID(report.AnalystID)
+	if err != nil || analyst == nil {
+		if err != nil {
+			log.Printf("[AdminService] query analyst %d for report notification failed: %v", report.AnalystID, err)
+		}
+		return
+	}
+	if err := s.notificationService.NotifyAnalystReportRejected(analyst.UserID, report.ID, report.PlayerName, remark); err != nil {
+		log.Printf("[AdminService] notify analyst %d for rejected report %d failed: %v", analyst.ID, report.ID, err)
+	}
 }
 
 func optionalActorID(actorID uint) *uint {

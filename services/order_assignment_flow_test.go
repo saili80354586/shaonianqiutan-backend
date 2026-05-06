@@ -60,6 +60,7 @@ func newOrderFlowFixture(t *testing.T) *orderFlowFixture {
 	}
 
 	userRepo := models.NewUserRepository(db)
+	reportRepo := models.NewReportRepository(db)
 	orderRepo := models.NewOrderRepository(db)
 	analystRepo := models.NewAnalystRepository(db)
 	assignmentRepo := models.NewOrderAssignmentRepository(db)
@@ -72,7 +73,7 @@ func newOrderFlowFixture(t *testing.T) *orderFlowFixture {
 		analyst: analyst,
 		adminService: NewAdminService(
 			userRepo,
-			nil,
+			reportRepo,
 			orderRepo,
 			analystRepo,
 			nil,
@@ -269,5 +270,148 @@ func TestOrderAssignmentFlowRejectResetsOrderAndRecordsReason(t *testing.T) {
 	}
 	if histories[1].Reason != reason {
 		t.Fatalf("expected reject reason %q, got %q", reason, histories[1].Reason)
+	}
+}
+
+func TestReportReviewCompletesOrderAfterAdminApproval(t *testing.T) {
+	fx := newOrderFlowFixture(t)
+	order := createUploadedOrder(t, fx.db, fx.player.ID, "FLOW-REPORT-APPROVE-001")
+
+	if _, err := fx.adminService.AssignOrder(order.ID, fx.analyst.ID, fx.admin.ID); err != nil {
+		t.Fatalf("assign order: %v", err)
+	}
+	if err := fx.analystService.AcceptOrder(fx.analyst.ID, order.ID); err != nil {
+		t.Fatalf("accept order: %v", err)
+	}
+
+	report := models.Report{
+		OrderID:        order.ID,
+		UserID:         fx.player.ID,
+		AnalystID:      fx.analyst.ID,
+		PlayerName:     "Demo Player",
+		PlayerPosition: "winger",
+		Content:        "submitted report",
+		Status:         models.ReportStatusProcessing,
+	}
+	if err := fx.db.Create(&report).Error; err != nil {
+		t.Fatalf("create report: %v", err)
+	}
+
+	if err := fx.adminService.ReviewReport(report.ID, models.ReportStatusCompleted, "", fx.admin.ID); err != nil {
+		t.Fatalf("review report: %v", err)
+	}
+
+	var updatedOrder models.Order
+	if err := fx.db.First(&updatedOrder, order.ID).Error; err != nil {
+		t.Fatalf("find order: %v", err)
+	}
+	if updatedOrder.Status != models.OrderStatusCompleted {
+		t.Fatalf("expected completed order after report approval, got %s", updatedOrder.Status)
+	}
+	if updatedOrder.ReportID == nil || *updatedOrder.ReportID != report.ID {
+		t.Fatalf("expected order report_id %d, got %#v", report.ID, updatedOrder.ReportID)
+	}
+	if updatedOrder.CompletedAt == nil {
+		t.Fatalf("expected completed_at after report approval")
+	}
+
+	var updatedReport models.Report
+	if err := fx.db.First(&updatedReport, report.ID).Error; err != nil {
+		t.Fatalf("find report: %v", err)
+	}
+	if updatedReport.Status != models.ReportStatusCompleted {
+		t.Fatalf("expected completed report, got %s", updatedReport.Status)
+	}
+
+	histories, err := fx.statusHistoryRepo.FindByOrderID(order.ID)
+	if err != nil {
+		t.Fatalf("find histories: %v", err)
+	}
+	if len(histories) != 3 {
+		t.Fatalf("expected 3 histories after approval, got %d", len(histories))
+	}
+	last := histories[2]
+	if last.FromStatus != models.OrderStatusProcessing || last.ToStatus != models.OrderStatusCompleted {
+		t.Fatalf("expected processing -> completed history, got %s -> %s", last.FromStatus, last.ToStatus)
+	}
+	if last.ActorID == nil || *last.ActorID != fx.admin.ID || last.ActorRole != "admin" {
+		t.Fatalf("expected admin actor on approval history, got %#v/%s", last.ActorID, last.ActorRole)
+	}
+}
+
+func TestReportReviewRejectsReportWithoutCompletingOrder(t *testing.T) {
+	fx := newOrderFlowFixture(t)
+	order := createUploadedOrder(t, fx.db, fx.player.ID, "FLOW-REPORT-REJECT-001")
+
+	if _, err := fx.adminService.AssignOrder(order.ID, fx.analyst.ID, fx.admin.ID); err != nil {
+		t.Fatalf("assign order: %v", err)
+	}
+	if err := fx.analystService.AcceptOrder(fx.analyst.ID, order.ID); err != nil {
+		t.Fatalf("accept order: %v", err)
+	}
+
+	report := models.Report{
+		OrderID:        order.ID,
+		UserID:         fx.player.ID,
+		AnalystID:      fx.analyst.ID,
+		PlayerName:     "Demo Player",
+		PlayerPosition: "winger",
+		Content:        "submitted report",
+		Status:         models.ReportStatusProcessing,
+	}
+	if err := fx.db.Create(&report).Error; err != nil {
+		t.Fatalf("create report: %v", err)
+	}
+
+	remark := "needs more detail"
+	if err := fx.adminService.ReviewReport(report.ID, models.ReportStatusFailed, remark, fx.admin.ID); err != nil {
+		t.Fatalf("review report: %v", err)
+	}
+
+	var updatedOrder models.Order
+	if err := fx.db.First(&updatedOrder, order.ID).Error; err != nil {
+		t.Fatalf("find order: %v", err)
+	}
+	if updatedOrder.Status != models.OrderStatusProcessing {
+		t.Fatalf("expected processing order after report rejection, got %s", updatedOrder.Status)
+	}
+	if updatedOrder.CompletedAt != nil {
+		t.Fatalf("expected completed_at to remain empty after rejection")
+	}
+
+	var updatedReport models.Report
+	if err := fx.db.First(&updatedReport, report.ID).Error; err != nil {
+		t.Fatalf("find report: %v", err)
+	}
+	if updatedReport.Status != models.ReportStatusFailed {
+		t.Fatalf("expected failed report, got %s", updatedReport.Status)
+	}
+	if updatedReport.ReviewRemark != remark {
+		t.Fatalf("expected review remark %q, got %q", remark, updatedReport.ReviewRemark)
+	}
+}
+
+func TestAdminGetPendingReportsReturnsProcessingReports(t *testing.T) {
+	fx := newOrderFlowFixture(t)
+	order := createUploadedOrder(t, fx.db, fx.player.ID, "FLOW-PENDING-REPORT-001")
+	report := models.Report{
+		OrderID:        order.ID,
+		UserID:         fx.player.ID,
+		AnalystID:      fx.analyst.ID,
+		PlayerName:     "Demo Player",
+		PlayerPosition: "winger",
+		Content:        "submitted report",
+		Status:         models.ReportStatusProcessing,
+	}
+	if err := fx.db.Create(&report).Error; err != nil {
+		t.Fatalf("create report: %v", err)
+	}
+
+	reports, total, err := fx.adminService.GetPendingReports(1, 10)
+	if err != nil {
+		t.Fatalf("get pending reports: %v", err)
+	}
+	if total != 1 || len(reports) != 1 || reports[0].ID != report.ID {
+		t.Fatalf("expected one pending report %d, got total=%d list=%v", report.ID, total, reports)
 	}
 }
