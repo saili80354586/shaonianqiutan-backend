@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/shaonianqiutan/backend/models"
@@ -9,13 +10,16 @@ import (
 	"gorm.io/gorm"
 )
 
+// ErrCoachPlayerAccessDenied 表示当前教练无权访问目标球员数据。
+var ErrCoachPlayerAccessDenied = errors.New("无权访问该球员")
+
 // CoachService 教练服务层
 type CoachService struct {
-	db                 *gorm.DB
-	coachRepo          *repositories.CoachRepository
-	teamRepo           *repositories.TeamRepository
-	weeklyReportRepo   *repositories.WeeklyReportRepository
-	matchSummaryRepo   *repositories.MatchSummaryRepository
+	db               *gorm.DB
+	coachRepo        *repositories.CoachRepository
+	teamRepo         *repositories.TeamRepository
+	weeklyReportRepo *repositories.WeeklyReportRepository
+	matchSummaryRepo *repositories.MatchSummaryRepository
 }
 
 // NewCoachService 创建教练服务
@@ -60,16 +64,13 @@ func (s *CoachService) UpdateCoachProfile(userID uint, licenseType, licenseNumbe
 	coach, err := s.coachRepo.GetCoachByUserID(userID)
 	if err == gorm.ErrRecordNotFound {
 		// 创建新教练资料
-		specialtiesJSON, _ := json.Marshal(specialties)
-		styleJSON, _ := json.Marshal(style)
-		ageGroupsJSON, _ := json.Marshal(ageGroups)
 		coach = &models.Coach{
 			UserID:        userID,
 			LicenseType:   licenseType,
 			LicenseNumber: licenseNumber,
-			Specialties:   string(specialtiesJSON),
-			Style:         string(styleJSON),
-			AgeGroups:     string(ageGroupsJSON),
+			Specialties:   specialties,
+			Style:         style,
+			AgeGroups:     ageGroups,
 			Bio:           bio,
 			City:          city,
 			CoachingYears: coachingYears,
@@ -90,16 +91,13 @@ func (s *CoachService) UpdateCoachProfile(userID uint, licenseType, licenseNumbe
 		coach.LicenseNumber = licenseNumber
 	}
 	if specialties != "" {
-		specialtiesJSON, _ := json.Marshal(specialties)
-		coach.Specialties = string(specialtiesJSON)
+		coach.Specialties = specialties
 	}
 	if style != "" {
-		styleJSON, _ := json.Marshal(style)
-		coach.Style = string(styleJSON)
+		coach.Style = style
 	}
 	if ageGroups != "" {
-		ageGroupsJSON, _ := json.Marshal(ageGroups)
-		coach.AgeGroups = string(ageGroupsJSON)
+		coach.AgeGroups = ageGroups
 	}
 	if bio != "" {
 		coach.Bio = bio
@@ -216,16 +214,16 @@ func (s *CoachService) GetDashboardStats(coachID uint, userID uint) map[string]i
 			var team models.Team
 			s.db.First(&team, m.TeamID)
 			recentPendingMatchSummaries = append(recentPendingMatchSummaries, map[string]interface{}{
-				"id":              m.ID,
-				"teamId":          m.TeamID,
-				"teamName":        team.Name,
-				"matchName":       m.MatchName,
-				"matchDate":       m.MatchDate,
-				"opponent":        m.Opponent,
-				"ourScore":        m.OurScore,
-				"opponentScore":   m.OppScore,
-				"matchResult":     m.Result,
-				"status":          m.Status,
+				"id":            m.ID,
+				"teamId":        m.TeamID,
+				"teamName":      team.Name,
+				"matchName":     m.MatchName,
+				"matchDate":     m.MatchDate,
+				"opponent":      m.Opponent,
+				"ourScore":      m.OurScore,
+				"opponentScore": m.OppScore,
+				"matchResult":   m.Result,
+				"status":        m.Status,
 			})
 		}
 	}
@@ -234,7 +232,7 @@ func (s *CoachService) GetDashboardStats(coachID uint, userID uint) map[string]i
 		"followedPlayers":             totalPlayers,
 		"totalReports":                int(totalNotes) * 3, // 估算
 		"trainingNotes":               totalNotes,
-		"monthlyViews":                30,                  // 保留字段，避免前端报错
+		"monthlyViews":                30, // 保留字段，避免前端报错
 		"starredPlayers":              starredCount,
 		"teamCount":                   teamCount,
 		"totalPlayers":                totalManagedPlayers,
@@ -279,20 +277,20 @@ func (s *CoachService) GetFollowedPlayers(coachID uint, page, pageSize int, keyw
 		_ = json.Unmarshal([]byte(f.User.Nickname), &playerSpecialties) // ignore error
 
 		result = append(result, map[string]interface{}{
-			"id":              f.User.ID,
-			"userId":          f.User.ID,
-			"name":            f.User.Name,
-			"avatar":          f.User.Avatar,
-			"age":             f.User.Age,
-			"position":        f.User.Position,
-			"positionName":    models.GetPositionName(f.User.Position),
-			"clubName":        "", // 从球员信息获取
-			"reportCount":     0,  // TODO: 从报告统计获取
-			"lastReportDate":  nil,
-			"overallRating":   0, // TODO: 从报告统计获取
-			"isStarred":       f.IsStarred,
-			"notes":           f.Notes,
-			"followedAt":      f.FollowedAt.Format("2006-01-02T15:04:05Z"),
+			"id":             f.User.ID,
+			"userId":         f.User.ID,
+			"name":           f.User.Name,
+			"avatar":         f.User.Avatar,
+			"age":            f.User.Age,
+			"position":       f.User.Position,
+			"positionName":   models.GetPositionName(f.User.Position),
+			"clubName":       "", // 从球员信息获取
+			"reportCount":    0,  // TODO: 从报告统计获取
+			"lastReportDate": nil,
+			"overallRating":  0, // TODO: 从报告统计获取
+			"isStarred":      f.IsStarred,
+			"notes":          f.Notes,
+			"followedAt":     f.FollowedAt.Format("2006-01-02T15:04:05Z"),
 		})
 	}
 
@@ -393,6 +391,14 @@ func (s *CoachService) DeleteTrainingNote(coachID, noteID uint) error {
 
 // GetPlayerProgress 获取球员进度
 func (s *CoachService) GetPlayerProgress(coachID, playerID uint) ([]map[string]interface{}, error) {
+	canAccess, err := s.coachRepo.CanAccessTeamPlayer(coachID, playerID)
+	if err != nil {
+		return nil, err
+	}
+	if !canAccess {
+		return nil, ErrCoachPlayerAccessDenied
+	}
+
 	return s.coachRepo.GetPlayerProgress(coachID, playerID)
 }
 
@@ -469,37 +475,37 @@ func (s *CoachService) GetRecentActivities(coachID uint, limit int) ([]map[strin
 
 // GetCoachPublicProfile 获取教练公开主页数据
 type CoachPublicProfile struct {
-	Coach               *CoachPublicInfo             `json:"coach"`
-	User                *models.User                 `json:"user,omitempty"`
-	Stats               CoachPublicStats              `json:"stats"`
-	SampleNotes         []CoachPublicNote             `json:"sample_notes"`
-	CoachingTeams       []CoachPublicTeam             `json:"coaching_teams"`
-	FootballExperiences []CoachPublicFootballExp      `json:"football_experiences"`
+	Coach               *CoachPublicInfo         `json:"coach"`
+	User                *models.User             `json:"user,omitempty"`
+	Stats               CoachPublicStats         `json:"stats"`
+	SampleNotes         []CoachPublicNote        `json:"sample_notes"`
+	CoachingTeams       []CoachPublicTeam        `json:"coaching_teams"`
+	FootballExperiences []CoachPublicFootballExp `json:"football_experiences"`
 }
 
 // CoachPublicInfo API响应专用的教练信息结构
 type CoachPublicInfo struct {
-	ID              uint     `json:"id"`
-	UserID          uint     `json:"user_id"`
-	LicenseType     string   `json:"license_type"`
-	LicenseNumber   string   `json:"license_number"`
-	Specialties     []string `json:"specialties"`
-	Style           []string `json:"style"`
-	AgeGroups       []string `json:"age_groups"`
-	Bio             string   `json:"bio"`
-	CoachingYears   int      `json:"coaching_years"`
-	CurrentClub     string   `json:"current_club"`
-	City            string   `json:"city"`
-	Verified        bool     `json:"verified"`
-	CreatedAt       string   `json:"created_at"`
-	UpdatedAt       string   `json:"updated_at"`
+	ID            uint     `json:"id"`
+	UserID        uint     `json:"user_id"`
+	LicenseType   string   `json:"license_type"`
+	LicenseNumber string   `json:"license_number"`
+	Specialties   []string `json:"specialties"`
+	Style         []string `json:"style"`
+	AgeGroups     []string `json:"age_groups"`
+	Bio           string   `json:"bio"`
+	CoachingYears int      `json:"coaching_years"`
+	CurrentClub   string   `json:"current_club"`
+	City          string   `json:"city"`
+	Verified      bool     `json:"verified"`
+	CreatedAt     string   `json:"created_at"`
+	UpdatedAt     string   `json:"updated_at"`
 }
 
 type CoachPublicStats struct {
-	FollowedPlayers  int64 `json:"followed_players"`
+	FollowedPlayers int64 `json:"followed_players"`
 	TrainingNotes   int64 `json:"training_notes"`
-	CoachingYears  int    `json:"coaching_years"`
-	TeamCount      int64 `json:"team_count"`
+	CoachingYears   int   `json:"coaching_years"`
+	TeamCount       int64 `json:"team_count"`
 }
 
 type CoachPublicNote struct {
@@ -517,15 +523,15 @@ type CoachPublicTeam struct {
 }
 
 type CoachPublicFootballExp struct {
-	ID         uint   `json:"id"`
-	Stage      string `json:"stage"`
-	StageName  string `json:"stage_name"`
-	TeamName   string `json:"team_name"`
-	Position   string `json:"position"`
-	StartYear  int    `json:"start_year"`
-	EndYear    int    `json:"end_year"`
-	Level      string `json:"level"`
-	Honors     string `json:"honors"`
+	ID        uint   `json:"id"`
+	Stage     string `json:"stage"`
+	StageName string `json:"stage_name"`
+	TeamName  string `json:"team_name"`
+	Position  string `json:"position"`
+	StartYear int    `json:"start_year"`
+	EndYear   int    `json:"end_year"`
+	Level     string `json:"level"`
+	Honors    string `json:"honors"`
 }
 
 func (s *CoachService) GetCoachPublicProfile(coachID uint) (*CoachPublicProfile, error) {
@@ -608,8 +614,8 @@ func (s *CoachService) GetCoachPublicProfile(coachID uint) (*CoachPublicProfile,
 		Stats: CoachPublicStats{
 			FollowedPlayers: totalFollowed,
 			TrainingNotes:   totalNotes,
-			CoachingYears:  coach.CoachingYears,
-			TeamCount:      0, // TODO: 从球队关联表获取
+			CoachingYears:   coach.CoachingYears,
+			TeamCount:       0, // TODO: 从球队关联表获取
 		},
 		SampleNotes:         sampleNotes,
 		CoachingTeams:       []CoachPublicTeam{}, // TODO: 从球队关联表获取

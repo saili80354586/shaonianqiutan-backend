@@ -3,6 +3,7 @@ package middleware
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -193,6 +194,79 @@ func ScoutRoleMiddleware() gin.HandlerFunc {
 // CoachRoleMiddleware 教练角色权限中间件
 func CoachRoleMiddleware() gin.HandlerFunc {
 	return requireActiveRole(models.RoleCoach, "您没有教练权限")
+}
+
+// ClubRoleMiddleware 要求当前登录用户必须管理一个俱乐部。
+func ClubRoleMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		club, ok := getAuthenticatedClub(c)
+		if !ok {
+			return
+		}
+
+		c.Set("clubId", club.ID)
+		c.Set("club", club)
+		c.Next()
+	}
+}
+
+// ClubOwnerMiddleware 要求当前登录用户必须是 URL 参数中指定俱乐部的管理员。
+func ClubOwnerMiddleware(paramName string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		clubIDStr := c.Param(paramName)
+		if clubIDStr == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少俱乐部ID"})
+			c.Abort()
+			return
+		}
+
+		clubID, err := strconv.ParseUint(clubIDStr, 10, 32)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "俱乐部ID格式错误"})
+			c.Abort()
+			return
+		}
+
+		club, ok := getAuthenticatedClub(c)
+		if !ok {
+			return
+		}
+		if club.ID != uint(clubID) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "无权管理该俱乐部"})
+			c.Abort()
+			return
+		}
+
+		c.Set("clubId", club.ID)
+		c.Set("club", club)
+		c.Next()
+	}
+}
+
+func getAuthenticatedClub(c *gin.Context) (*models.Club, bool) {
+	userID := GetUserID(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未认证"})
+		c.Abort()
+		return nil, false
+	}
+
+	userValue, exists := c.Get("user")
+	user, ok := userValue.(*models.User)
+	if !exists || !ok || user == nil || user.Status != models.StatusActive {
+		c.JSON(http.StatusForbidden, gin.H{"error": "您没有俱乐部权限"})
+		c.Abort()
+		return nil, false
+	}
+
+	var club models.Club
+	if err := config.GetDB().Where("user_id = ?", userID).First(&club).Error; err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "您没有俱乐部权限"})
+		c.Abort()
+		return nil, false
+	}
+
+	return &club, true
 }
 
 func requireActiveRole(role models.UserRole, message string) gin.HandlerFunc {

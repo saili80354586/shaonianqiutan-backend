@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shaonianqiutan/backend/middleware"
 	"github.com/shaonianqiutan/backend/models"
 	"github.com/shaonianqiutan/backend/services"
 	"github.com/shaonianqiutan/backend/utils"
@@ -19,6 +20,18 @@ type PhysicalTestController struct {
 
 func NewPhysicalTestController(ptService *services.PhysicalTestService) *PhysicalTestController {
 	return &PhysicalTestController{ptService: ptService}
+}
+
+func (c *PhysicalTestController) getAccessibleClub(ctx *gin.Context, userID uint) (*models.Club, error) {
+	if accessCtx := middleware.GetTeamAccessContext(ctx); accessCtx != nil && accessCtx.ClubID > 0 {
+		var club models.Club
+		if err := c.ptService.GetDB().First(&club, accessCtx.ClubID).Error; err != nil {
+			return nil, err
+		}
+		return &club, nil
+	}
+
+	return c.ptService.GetClubByUserID(userID)
 }
 
 // GetPhysicalTests 获取体测活动列表
@@ -34,7 +47,7 @@ func (c *PhysicalTestController) GetPhysicalTests(ctx *gin.Context) {
 		teamID, _ = strconv.ParseUint(ctx.Query("teamId"), 10, 32)
 	}
 
-	club, err := c.ptService.GetClubByUserID(userID)
+	club, err := c.getAccessibleClub(ctx, userID)
 	if err != nil || club == nil {
 		utils.PaginatedResponse(ctx, []interface{}{}, page, pageSize, 0)
 		return
@@ -93,7 +106,7 @@ func (c *PhysicalTestController) CreatePhysicalTest(ctx *gin.Context) {
 		return
 	}
 
-	club, err := c.ptService.GetClubByUserID(userID)
+	club, err := c.getAccessibleClub(ctx, userID)
 	if err != nil || club == nil {
 		utils.ForbiddenError(ctx, "无权限")
 		return
@@ -175,7 +188,7 @@ func (c *PhysicalTestController) GetPhysicalTest(ctx *gin.Context) {
 		return
 	}
 
-	club, err := c.ptService.GetClubByUserID(userID)
+	club, err := c.getAccessibleClub(ctx, userID)
 	if err != nil || club == nil {
 		utils.ForbiddenError(ctx, "无权限")
 		return
@@ -227,7 +240,7 @@ func (c *PhysicalTestController) UpdatePhysicalTest(ctx *gin.Context) {
 		return
 	}
 
-	club, err := c.ptService.GetClubByUserID(userID)
+	club, err := c.getAccessibleClub(ctx, userID)
 	if err != nil || club == nil {
 		utils.ForbiddenError(ctx, "无权限")
 		return
@@ -300,7 +313,7 @@ func (c *PhysicalTestController) DeletePhysicalTest(ctx *gin.Context) {
 		return
 	}
 
-	club, err := c.ptService.GetClubByUserID(userID)
+	club, err := c.getAccessibleClub(ctx, userID)
 	if err != nil || club == nil {
 		utils.ForbiddenError(ctx, "无权限")
 		return
@@ -334,7 +347,7 @@ func (c *PhysicalTestController) NotifyPhysicalTest(ctx *gin.Context) {
 		return
 	}
 
-	club, err := c.ptService.GetClubByUserID(userID)
+	club, err := c.getAccessibleClub(ctx, userID)
 	if err != nil || club == nil {
 		utils.ForbiddenError(ctx, "无权限")
 		return
@@ -362,7 +375,7 @@ func (c *PhysicalTestController) GetPhysicalTestRecords(ctx *gin.Context) {
 		return
 	}
 
-	club, err := c.ptService.GetClubByUserID(userID)
+	club, err := c.getAccessibleClub(ctx, userID)
 	if err != nil || club == nil {
 		utils.ForbiddenError(ctx, "无权限")
 		return
@@ -426,7 +439,7 @@ func (c *PhysicalTestController) CreatePhysicalTestRecord(ctx *gin.Context) {
 		return
 	}
 
-	club, err := c.ptService.GetClubByUserID(userID)
+	club, err := c.getAccessibleClub(ctx, userID)
 	if err != nil || club == nil {
 		utils.ForbiddenError(ctx, "无权限")
 		return
@@ -766,7 +779,7 @@ func getRecordProgressByItems(r *models.PhysicalTestRecord, items []string) map[
 func (c *PhysicalTestController) GetCustomTemplates(ctx *gin.Context) {
 	userID := ctx.GetUint("userId")
 
-	club, err := c.ptService.GetClubByUserID(userID)
+	club, err := c.getAccessibleClub(ctx, userID)
 	if err != nil || club == nil {
 		utils.ForbiddenError(ctx, "无权限")
 		return
@@ -806,7 +819,7 @@ func (c *PhysicalTestController) CreateCustomTemplate(ctx *gin.Context) {
 		return
 	}
 
-	club, err := c.ptService.GetClubByUserID(userID)
+	club, err := c.getAccessibleClub(ctx, userID)
 	if err != nil || club == nil {
 		utils.ForbiddenError(ctx, "无权限")
 		return
@@ -840,7 +853,7 @@ func (c *PhysicalTestController) DeleteCustomTemplate(ctx *gin.Context) {
 		return
 	}
 
-	club, err := c.ptService.GetClubByUserID(userID)
+	club, err := c.getAccessibleClub(ctx, userID)
 	if err != nil || club == nil {
 		utils.ForbiddenError(ctx, "无权限")
 		return

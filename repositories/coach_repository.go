@@ -112,7 +112,7 @@ func (r *CoachRepository) FollowPlayer(coachID, playerID uint) error {
 	if err == gorm.ErrRecordNotFound {
 		follow := &models.CoachFollowPlayer{
 			CoachID:    coachID,
-			UserID:    playerID,
+			UserID:     playerID,
 			FollowedAt: time.Now(),
 		}
 		return r.db.Create(follow).Error
@@ -184,12 +184,27 @@ func (r *CoachRepository) DeleteTrainingNote(coachID, noteID uint) error {
 	return r.db.Where("coach_id = ? AND id = ?", coachID, noteID).Delete(&models.TrainingNote{}).Error
 }
 
+// CanAccessTeamPlayer 检查教练是否能访问球队中的球员。
+func (r *CoachRepository) CanAccessTeamPlayer(coachID, playerID uint) (bool, error) {
+	var coach models.Coach
+	if err := r.db.Select("user_id").Where("id = ?", coachID).First(&coach).Error; err != nil {
+		return false, err
+	}
+
+	var count int64
+	err := r.db.Model(&models.TeamPlayer{}).
+		Joins("JOIN team_coaches ON team_coaches.team_id = team_players.team_id AND team_coaches.user_id = ? AND team_coaches.status = ? AND team_coaches.deleted_at IS NULL", coach.UserID, "active").
+		Where("team_players.user_id = ? AND team_players.status = ? AND team_players.deleted_at IS NULL", playerID, "active").
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
 // GetPlayerProgress 获取球员进度数据
 func (r *CoachRepository) GetPlayerProgress(coachID, playerID uint) ([]map[string]interface{}, error) {
-	// 获取该球员被该教练关注的记录
-	var follows []models.CoachFollowPlayer
-	r.db.Where("coach_id = ? AND user_id = ?", coachID, playerID).Preload("User").Find(&follows)
-
 	// 获取该球员的训练笔记
 	var notes []models.TrainingNote
 	r.db.Where("coach_id = ? AND player_id = ?", coachID, playerID).Order("created_at DESC").Limit(10).Find(&notes)
@@ -203,13 +218,13 @@ func (r *CoachRepository) GetPlayerProgress(coachID, playerID uint) ([]map[strin
 	// 添加笔记记录
 	for _, n := range notes {
 		result = append(result, map[string]interface{}{
-			"type":      "note",
-			"id":        n.ID,
-			"date":      n.CreatedAt,
-			"title":     n.Title,
-			"content":   n.Content,
-			"category":  n.Category,
-			"rating":    n.Rating,
+			"type":     "note",
+			"id":       n.ID,
+			"date":     n.CreatedAt,
+			"title":    n.Title,
+			"content":  n.Content,
+			"category": n.Category,
+			"rating":   n.Rating,
 		})
 	}
 

@@ -33,6 +33,7 @@ func setupRoleMiddlewareTestRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 		&models.User{},
 		&models.Scout{},
 		&models.Coach{},
+		&models.Club{},
 		&models.ClubCoach{},
 		&models.TeamCoach{},
 	); err != nil {
@@ -50,6 +51,9 @@ func setupRoleMiddlewareTestRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 		c.Status(http.StatusNoContent)
 	})
 	router.GET("/coach/probe", middleware.AuthMiddleware(), middleware.CoachRoleMiddleware(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+	router.GET("/club/probe", middleware.AuthMiddleware(), middleware.ClubRoleMiddleware(), func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 	})
 
@@ -145,6 +149,32 @@ func TestCoachRoleMiddlewareAllowsTeamCoachMembership(t *testing.T) {
 	}
 
 	rec := performRoleMiddlewareRequest(t, router, http.MethodGet, "/coach/probe", user)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestClubRoleMiddlewareRejectsPlayerWithoutClub(t *testing.T) {
+	router, db := setupRoleMiddlewareTestRouter(t)
+	user := createRoleMiddlewareTestUser(t, db, "13900007005", models.RoleUser)
+
+	rec := performRoleMiddlewareRequest(t, router, http.MethodGet, "/club/probe", user)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestClubRoleMiddlewareAllowsClubOwner(t *testing.T) {
+	router, db := setupRoleMiddlewareTestRouter(t)
+	user := createRoleMiddlewareTestUser(t, db, "13900007006", models.RoleClub)
+	if err := db.Create(&models.Club{
+		UserID: user.ID,
+		Name:   "权限测试俱乐部",
+	}).Error; err != nil {
+		t.Fatalf("create club: %v", err)
+	}
+
+	rec := performRoleMiddlewareRequest(t, router, http.MethodGet, "/club/probe", user)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}

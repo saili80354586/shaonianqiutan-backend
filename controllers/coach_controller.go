@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"encoding/json"
+	"errors"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -33,11 +34,20 @@ func (c *CoachController) GetCoachProfile(ctx *gin.Context) {
 
 	// 获取用户的 position（存储在 users 表，用于球探地图筛选）
 	var user models.User
-	if err := config.GetDB().Select("id, name, avatar, nickname, position").Where("id = ?", userID).First(&user).Error; err == nil {
+	if err := config.GetDB().Select("id, name, avatar, nickname, position, province, city").Where("id = ?", userID).First(&user).Error; err == nil {
 		// 返回时将 user.position 附加到响应中
 		data := gin.H{
 			"coach":    coach,
 			"position": user.Position,
+			"user": gin.H{
+				"id":       user.ID,
+				"name":     user.Name,
+				"nickname": user.Nickname,
+				"avatar":   user.Avatar,
+				"position": user.Position,
+				"province": user.Province,
+				"city":     user.City,
+			},
 		}
 		utils.SuccessResponse(ctx, data)
 		return
@@ -103,16 +113,16 @@ func (c *CoachController) UpdateCoachProfile(ctx *gin.Context) {
 	userID := ctx.GetUint("userId")
 
 	var req struct {
-		LicenseType    string   `json:"licenseType"`
-		LicenseNumber  string   `json:"licenseNumber"`
+		LicenseType   string   `json:"licenseType"`
+		LicenseNumber string   `json:"licenseNumber"`
 		Specialties   []string `json:"specialties"`
-		Style        []string `json:"style"`
-		AgeGroups    []string `json:"ageGroups"`
-		Bio          string   `json:"bio"`
-		City         string   `json:"city"`
+		Style         []string `json:"style"`
+		AgeGroups     []string `json:"ageGroups"`
+		Bio           string   `json:"bio"`
+		City          string   `json:"city"`
 		CoachingYears int      `json:"coachingYears"`
-		CurrentClub  string   `json:"currentClub"`
-		Position     string   `json:"position"` // 执教位置（同步到 users.position，球探地图筛选）
+		CurrentClub   string   `json:"currentClub"`
+		Position      string   `json:"position"` // 执教位置（同步到 users.position，球探地图筛选）
 	}
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -162,7 +172,7 @@ func (c *CoachController) GetDashboard(ctx *gin.Context) {
 
 	utils.SuccessResponse(ctx, gin.H{
 		"stats":            stats,
-		"recentActivities":  activities,
+		"recentActivities": activities,
 	})
 }
 
@@ -188,10 +198,10 @@ func (c *CoachController) GetFollowedPlayers(ctx *gin.Context) {
 	}
 
 	utils.SuccessResponse(ctx, gin.H{
-		"list":      players,
-		"total":     total,
-		"page":      page,
-		"pageSize":  pageSize,
+		"list":     players,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
 	})
 }
 
@@ -326,13 +336,13 @@ func (c *CoachController) CreateTrainingNote(ctx *gin.Context) {
 	userID := ctx.GetUint("userId")
 
 	var req struct {
-		PlayerID  uint     `json:"playerId" binding:"required"`
-		Title     string   `json:"title" binding:"required"`
-		Content   string   `json:"content" binding:"required"`
-		Category  string   `json:"category"`
-		Tags      []string `json:"tags"`
-		Rating    int      `json:"rating"`
-		IsPublic  bool     `json:"isPublic"`
+		PlayerID uint     `json:"playerId" binding:"required"`
+		Title    string   `json:"title" binding:"required"`
+		Content  string   `json:"content" binding:"required"`
+		Category string   `json:"category"`
+		Tags     []string `json:"tags"`
+		Rating   int      `json:"rating"`
+		IsPublic bool     `json:"isPublic"`
 	}
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -440,6 +450,10 @@ func (c *CoachController) GetPlayerProgress(ctx *gin.Context) {
 
 	progress, err := c.coachService.GetPlayerProgress(coach.ID, uint(playerID))
 	if err != nil {
+		if errors.Is(err, services.ErrCoachPlayerAccessDenied) {
+			utils.ForbiddenError(ctx, "无权访问该球员")
+			return
+		}
 		utils.ServerError(ctx, "获取进度失败")
 		return
 	}

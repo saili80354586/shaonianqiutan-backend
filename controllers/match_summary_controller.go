@@ -353,6 +353,37 @@ func (c *MatchSummaryController) buildDetailResponse(m *models.MatchSummary) mod
 		resp.PlayerIDs = []uint{}
 	}
 
+	if len(resp.PlayerIDs) > 0 {
+		var teamPlayers []models.TeamPlayer
+		err := c.db.
+			Where("team_id = ? AND status = ? AND (user_id IN ? OR id IN ?)", m.TeamID, "active", resp.PlayerIDs, resp.PlayerIDs).
+			Preload("User").
+			Find(&teamPlayers).Error
+		if err == nil {
+			playerByID := make(map[uint]models.TeamPlayer, len(teamPlayers)*2)
+			for _, player := range teamPlayers {
+				playerByID[player.UserID] = player
+				playerByID[player.ID] = player
+			}
+
+			resp.Players = make([]models.PlayerInfoResponse, 0, len(resp.PlayerIDs))
+			for _, playerID := range resp.PlayerIDs {
+				player, ok := playerByID[playerID]
+				if !ok || player.User == nil {
+					continue
+				}
+				number, _ := strconv.Atoi(player.JerseyNumber)
+				resp.Players = append(resp.Players, models.PlayerInfoResponse{
+					ID:       player.UserID,
+					Name:     player.User.Name,
+					Avatar:   player.User.Avatar,
+					Number:   number,
+					Position: player.Position,
+				})
+			}
+		}
+	}
+
 	// Videos JSON
 	if m.Videos != "" && m.Videos != "null" {
 		var videos []models.MatchVideoResponse

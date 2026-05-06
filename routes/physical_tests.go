@@ -9,7 +9,7 @@ import (
 // SetupPhysicalTestRoutes 设置俱乐部体测路由
 func SetupPhysicalTestRoutes(r *gin.RouterGroup, ptController *controllers.PhysicalTestController) {
 	physicalTests := r.Group("/club/physical-tests")
-	physicalTests.Use(middleware.AuthMiddleware())
+	physicalTests.Use(middleware.AuthMiddleware(), middleware.ClubRoleMiddleware())
 	{
 		// 体测活动管理
 		physicalTests.GET("", ptController.GetPhysicalTests)

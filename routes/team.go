@@ -76,6 +76,9 @@ func SetupTeamRoutes(
 		// 体测管理（统一端点，按俱乐部维度管理）
 		teams.GET("/:teamId/physical-tests", ptController.GetPhysicalTests)
 		teams.POST("/:teamId/physical-tests", ptController.CreatePhysicalTest)
+		teams.GET("/:teamId/physical-tests/templates", ptController.GetCustomTemplates)
+		teams.POST("/:teamId/physical-tests/templates", ptController.CreateCustomTemplate)
+		teams.DELETE("/:teamId/physical-tests/templates/:id", ptController.DeleteCustomTemplate)
 		teams.GET("/:teamId/physical-tests/:id", ptController.GetPhysicalTest)
 		teams.PUT("/:teamId/physical-tests/:id", ptController.UpdatePhysicalTest)
 		teams.DELETE("/:teamId/physical-tests/:id", ptController.DeletePhysicalTest)
