@@ -11,7 +11,7 @@ func SetupClubActivityRoutes(r *gin.RouterGroup, ctrl *controllers.ClubActivityC
 	clubs := r.Group("/clubs")
 	{
 		// 公开接口：获取活动列表
-		clubs.GET("/:clubId/activities", ctrl.ListActivities)
+		clubs.GET("/:clubId/activities", middleware.OptionalAuthMiddleware(), ctrl.ListActivities)
 		// 公开接口：报名活动，登录用户会自动绑定报名记录
 		clubs.POST("/:clubId/activities/:id/register", middleware.OptionalAuthMiddleware(), ctrl.RegisterActivity)
 
@@ -20,7 +20,7 @@ func SetupClubActivityRoutes(r *gin.RouterGroup, ctrl *controllers.ClubActivityC
 
 		// 管理接口：需要认证
 		admin := clubs.Group("/:clubId/activities")
-		admin.Use(middleware.AuthMiddleware())
+		admin.Use(middleware.AuthMiddleware(), middleware.ClubOwnerMiddleware("clubId"))
 		{
 			admin.POST("", ctrl.CreateActivity)
 			admin.PUT("/:id", ctrl.UpdateActivity)

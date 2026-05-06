@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -132,8 +133,13 @@ func (c *WeeklyReportController) Get(ctx *gin.Context) {
 		return
 	}
 
-	report, err := c.service.GetByID(uint(id))
+	userID := ctx.GetUint("userId")
+	report, err := c.service.GetByIDForUser(uint(id), userID)
 	if err != nil {
+		if errors.Is(err, services.ErrWeeklyReportAccessDenied) {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": "无权访问该周报"})
+			return
+		}
 		ctx.JSON(http.StatusNotFound, gin.H{"error": "周报不存在"})
 		return
 	}
@@ -158,8 +164,13 @@ func (c *WeeklyReportController) ListByPlayer(ctx *gin.Context) {
 	page := pagination.Page
 	pageSize := pagination.PageSize
 
-	reports, total, err := c.service.ListByPlayer(uint(playerID), page, pageSize)
+	userID := ctx.GetUint("userId")
+	reports, total, err := c.service.ListByPlayerForUser(uint(playerID), userID, page, pageSize)
 	if err != nil {
+		if errors.Is(err, services.ErrWeeklyReportAccessDenied) {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": "无权访问该球员周报"})
+			return
+		}
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

@@ -20,7 +20,7 @@ func SetupClubRoutes(
 
 	// 俱乐部路由（需要认证）
 	club := r.Group("/club")
-	club.Use(middleware.AuthMiddleware())
+	club.Use(middleware.AuthMiddleware(), middleware.ClubRoleMiddleware())
 	{
 		// 俱乐部资料
 		club.GET("/profile", clubController.GetClubProfile)
@@ -107,6 +107,7 @@ func SetupClubRoutes(
 		club.GET("/match-schedules/:id", matchScheduleController.GetMatchSchedule)
 		club.PUT("/match-schedules/:id", matchScheduleController.UpdateMatchSchedule)
 		club.DELETE("/match-schedules/:id", matchScheduleController.DeleteMatchSchedule)
+		club.POST("/match-schedules/:id/summary", matchScheduleController.CreateMatchSummaryFromSchedule)
 	}
 
 	// 俱乐部邀请（教练视角 - 需要认证但不是俱乐部成员）

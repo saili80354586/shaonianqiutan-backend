@@ -10,7 +10,7 @@ import (
 func SetupClubOrderRoutes(r *gin.RouterGroup, orderController *controllers.ClubOrderController) {
 	// 俱乐部订单路由
 	orders := r.Group("/club/orders")
-	orders.Use(middleware.AuthMiddleware())
+	orders.Use(middleware.AuthMiddleware(), middleware.ClubRoleMiddleware())
 	{
 		orders.GET("", orderController.GetOrders)
 		orders.GET("/stats", orderController.GetStats)

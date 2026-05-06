@@ -97,6 +97,28 @@ var provinceNames = []string{
 
 var activeActivityRegistrationStatuses = []string{"pending", "confirmed", "checked_in"}
 
+func (c *ClubActivityController) canManageClub(ctx *gin.Context, clubID uint) bool {
+	userID := ctx.GetUint("userId")
+	if userID == 0 {
+		return false
+	}
+
+	var count int64
+	if err := c.db.Model(&models.Club{}).Where("id = ? AND user_id = ?", clubID, userID).Count(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
+}
+
+func (c *ClubActivityController) getClubActivity(ctx *gin.Context, clubID, activityID uint) (*models.ClubActivity, bool) {
+	var activity models.ClubActivity
+	if err := c.db.Where("id = ? AND club_id = ?", activityID, clubID).First(&activity).Error; err != nil {
+		utils.NotFoundError(ctx, "活动不存在")
+		return nil, false
+	}
+	return &activity, true
+}
+
 type activityRegistrationRequest struct {
 	Name           string `json:"name"`
 	Phone          string `json:"phone"`
@@ -221,16 +243,22 @@ func getCityCoord(city string) (lat, lng float64) {
 // ListActivities 获取俱乐部活动列表（公开）
 func (c *ClubActivityController) ListActivities(ctx *gin.Context) {
 	clubIDStr := ctx.Param("clubId")
-	clubID, err := strconv.ParseUint(clubIDStr, 10, 32)
+	clubIDValue, err := strconv.ParseUint(clubIDStr, 10, 32)
 	if err != nil {
 		utils.ValidationError(ctx, "无效的俱乐部ID")
 		return
 	}
+	clubID := uint(clubIDValue)
 
 	activityType := ctx.Query("type")           // external, internal, 空表示全部
 	status := ctx.Query("status")               // upcoming, ongoing, ended, 空表示全部
 	isReview := ctx.Query("isReview")           // true, false
 	publishStatus := ctx.Query("publishStatus") // draft, published, unpublished
+	adminPublishFilter := publishStatus != "" && publishStatus != "published"
+	if adminPublishFilter && !c.canManageClub(ctx, clubID) {
+		utils.ForbiddenError(ctx, "无权访问该俱乐部活动管理数据")
+		return
+	}
 
 	db := c.db.Where("club_id = ?", clubID)
 	if activityType != "" {
@@ -242,13 +270,19 @@ func (c *ClubActivityController) ListActivities(ctx *gin.Context) {
 	if isReview == "true" {
 		db = db.Where("is_review = ? AND status = ?", true, "ended")
 	}
-	if publishStatus != "" {
-		if publishStatus != "all" {
-			db = db.Where("publish_status = ?", publishStatus)
-		}
-	} else {
+	switch publishStatus {
+	case "":
 		// 默认只显示已发布的活动
 		db = db.Where("publish_status = ?", "published")
+	case "published":
+		db = db.Where("publish_status = ?", "published")
+	case "all":
+		// 仅俱乐部管理员可查看本俱乐部全部发布状态。
+	case "draft", "unpublished":
+		db = db.Where("publish_status = ?", publishStatus)
+	default:
+		utils.ValidationError(ctx, "无效的发布状态")
+		return
 	}
 
 	var activities []models.ClubActivity
@@ -634,7 +668,7 @@ func (c *ClubActivityController) registerActivity(ctx *gin.Context, activityID u
 // ListRegistrations 获取活动报名列表
 func (c *ClubActivityController) ListRegistrations(ctx *gin.Context) {
 	clubIDStr := ctx.Param("clubId")
-	_, err := strconv.ParseUint(clubIDStr, 10, 32)
+	clubID, err := strconv.ParseUint(clubIDStr, 10, 32)
 	if err != nil {
 		utils.ValidationError(ctx, "无效的俱乐部ID")
 		return
@@ -643,6 +677,9 @@ func (c *ClubActivityController) ListRegistrations(ctx *gin.Context) {
 	activityID, err := strconv.ParseUint(activityIDStr, 10, 32)
 	if err != nil {
 		utils.ValidationError(ctx, "无效的活动ID")
+		return
+	}
+	if _, ok := c.getClubActivity(ctx, uint(clubID), uint(activityID)); !ok {
 		return
 	}
 
@@ -658,15 +695,25 @@ func (c *ClubActivityController) ListRegistrations(ctx *gin.Context) {
 // UpdateRegistrationStatus 更新报名状态
 func (c *ClubActivityController) UpdateRegistrationStatus(ctx *gin.Context) {
 	clubIDStr := ctx.Param("clubId")
-	_, err := strconv.ParseUint(clubIDStr, 10, 32)
+	clubID, err := strconv.ParseUint(clubIDStr, 10, 32)
 	if err != nil {
 		utils.ValidationError(ctx, "无效的俱乐部ID")
+		return
+	}
+	activityIDStr := ctx.Param("id")
+	activityID, err := strconv.ParseUint(activityIDStr, 10, 32)
+	if err != nil {
+		utils.ValidationError(ctx, "无效的活动ID")
 		return
 	}
 	regIDStr := ctx.Param("regId")
 	regID, err := strconv.ParseUint(regIDStr, 10, 32)
 	if err != nil {
 		utils.ValidationError(ctx, "无效的报名ID")
+		return
+	}
+	activity, ok := c.getClubActivity(ctx, uint(clubID), uint(activityID))
+	if !ok {
 		return
 	}
 
@@ -679,22 +726,19 @@ func (c *ClubActivityController) UpdateRegistrationStatus(ctx *gin.Context) {
 	}
 
 	var reg models.ClubActivityRegistration
-	if err := c.db.First(&reg, regID).Error; err != nil {
+	if err := c.db.Where("id = ? AND activity_id = ?", regID, activityID).First(&reg).Error; err != nil {
 		utils.NotFoundError(ctx, "报名记录不存在")
 		return
 	}
 
-	if err := c.db.Model(&models.ClubActivityRegistration{}).Where("id = ?", regID).Update("status", req.Status).Error; err != nil {
+	if err := c.db.Model(&models.ClubActivityRegistration{}).Where("id = ? AND activity_id = ?", regID, activityID).Update("status", req.Status).Error; err != nil {
 		utils.ServerError(ctx, "更新失败")
 		return
 	}
 
 	// 发送审批结果通知
 	go func() {
-		var activity models.ClubActivity
-		if err := c.db.First(&activity, reg.ActivityID).Error; err == nil {
-			c.notifyRegistrationResult(activity, reg, req.Status)
-		}
+		c.notifyRegistrationResult(*activity, reg, req.Status)
 	}()
 
 	utils.SuccessResponseWithMessage(ctx, nil, "更新成功")
@@ -761,7 +805,7 @@ func (c *ClubActivityController) UnpublishActivity(ctx *gin.Context) {
 // BatchUpdateRegistrationStatus 批量更新报名状态
 func (c *ClubActivityController) BatchUpdateRegistrationStatus(ctx *gin.Context) {
 	clubIDStr := ctx.Param("clubId")
-	_, err := strconv.ParseUint(clubIDStr, 10, 32)
+	clubID, err := strconv.ParseUint(clubIDStr, 10, 32)
 	if err != nil {
 		utils.ValidationError(ctx, "无效的俱乐部ID")
 		return
@@ -770,6 +814,10 @@ func (c *ClubActivityController) BatchUpdateRegistrationStatus(ctx *gin.Context)
 	activityID, err := strconv.ParseUint(activityIDStr, 10, 32)
 	if err != nil {
 		utils.ValidationError(ctx, "无效的活动ID")
+		return
+	}
+	activity, ok := c.getClubActivity(ctx, uint(clubID), uint(activityID))
+	if !ok {
 		return
 	}
 
@@ -794,11 +842,8 @@ func (c *ClubActivityController) BatchUpdateRegistrationStatus(ctx *gin.Context)
 
 	// 发送审批结果通知
 	go func() {
-		var activity models.ClubActivity
-		if err := c.db.First(&activity, activityID).Error; err == nil {
-			for _, reg := range regs {
-				c.notifyRegistrationResult(activity, reg, req.Status)
-			}
+		for _, reg := range regs {
+			c.notifyRegistrationResult(*activity, reg, req.Status)
 		}
 	}()
 
@@ -808,7 +853,7 @@ func (c *ClubActivityController) BatchUpdateRegistrationStatus(ctx *gin.Context)
 // ExportRegistrations 导出活动报名记录为 CSV
 func (c *ClubActivityController) ExportRegistrations(ctx *gin.Context) {
 	clubIDStr := ctx.Param("clubId")
-	_, err := strconv.ParseUint(clubIDStr, 10, 32)
+	clubID, err := strconv.ParseUint(clubIDStr, 10, 32)
 	if err != nil {
 		utils.ValidationError(ctx, "无效的俱乐部ID")
 		return
@@ -817,6 +862,9 @@ func (c *ClubActivityController) ExportRegistrations(ctx *gin.Context) {
 	activityID, err := strconv.ParseUint(activityIDStr, 10, 32)
 	if err != nil {
 		utils.ValidationError(ctx, "无效的活动ID")
+		return
+	}
+	if _, ok := c.getClubActivity(ctx, uint(clubID), uint(activityID)); !ok {
 		return
 	}
 

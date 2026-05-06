@@ -11,6 +11,9 @@ import (
 	"gorm.io/gorm"
 )
 
+// ErrWeeklyReportAccessDenied 表示当前用户无权访问目标周报数据。
+var ErrWeeklyReportAccessDenied = errors.New("无权访问该周报")
+
 // WeeklyReportService 周报服务
 type WeeklyReportService struct {
 	db                  *gorm.DB
@@ -70,6 +73,46 @@ func (s *WeeklyReportService) isClubAdminOfTeam(teamID, userID uint) bool {
 // CanManageTeam 检查用户是否可以管理球队周报（教练或俱乐部管理员）
 func (s *WeeklyReportService) CanManageTeam(teamID, userID uint) bool {
 	return s.isTeamCoach(teamID, userID) || s.isClubAdminOfTeam(teamID, userID)
+}
+
+// CanAccessWeeklyReport 检查用户是否可以查看指定周报。
+func (s *WeeklyReportService) CanAccessWeeklyReport(report *models.WeeklyReport, userID uint) bool {
+	if report == nil || userID == 0 {
+		return false
+	}
+	if report.PlayerID == userID {
+		return true
+	}
+	return s.CanManageTeam(report.TeamID, userID)
+}
+
+// CanAccessPlayerWeeklyReports 检查用户是否可以查看某球员的周报列表。
+func (s *WeeklyReportService) CanAccessPlayerWeeklyReports(playerID, userID uint) bool {
+	if playerID == 0 || userID == 0 {
+		return false
+	}
+	if playerID == userID {
+		return true
+	}
+
+	return len(s.accessibleWeeklyReportTeamIDsForPlayer(playerID, userID)) > 0
+}
+
+func (s *WeeklyReportService) accessibleWeeklyReportTeamIDsForPlayer(playerID, userID uint) []uint {
+	if playerID == 0 || userID == 0 {
+		return nil
+	}
+
+	var teamIDs []uint
+	s.db.Model(&models.TeamPlayer{}).
+		Joins("JOIN teams ON teams.id = team_players.team_id AND teams.deleted_at IS NULL").
+		Joins("LEFT JOIN team_coaches ON team_coaches.team_id = teams.id AND team_coaches.user_id = ? AND team_coaches.status = ? AND team_coaches.deleted_at IS NULL", userID, "active").
+		Joins("LEFT JOIN clubs ON clubs.id = teams.club_id AND clubs.user_id = ? AND clubs.deleted_at IS NULL", userID).
+		Where("team_players.user_id = ? AND team_players.status = ?", playerID, "active").
+		Where("team_coaches.id IS NOT NULL OR clubs.id IS NOT NULL").
+		Distinct("team_players.team_id").
+		Pluck("team_players.team_id", &teamIDs)
+	return teamIDs
 }
 
 // Submit 球员提交周报
@@ -304,6 +347,18 @@ func (s *WeeklyReportService) GetByID(id uint) (*models.WeeklyReport, error) {
 	return s.reportRepo.GetByID(id)
 }
 
+// GetByIDForUser 获取当前用户可访问的周报详情。
+func (s *WeeklyReportService) GetByIDForUser(id, userID uint) (*models.WeeklyReport, error) {
+	report, err := s.reportRepo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if !s.CanAccessWeeklyReport(report, userID) {
+		return nil, ErrWeeklyReportAccessDenied
+	}
+	return report, nil
+}
+
 // ListByPlayer 列出球员周报
 func (s *WeeklyReportService) ListByPlayer(playerID uint, page, pageSize int) ([]models.WeeklyReport, int64, error) {
 	if page < 1 {
@@ -313,6 +368,38 @@ func (s *WeeklyReportService) ListByPlayer(playerID uint, page, pageSize int) ([
 		pageSize = 10
 	}
 	return s.reportRepo.ListByPlayer(playerID, page, pageSize)
+}
+
+// ListByPlayerForUser 列出当前用户可访问的球员周报。
+func (s *WeeklyReportService) ListByPlayerForUser(playerID, userID uint, page, pageSize int) ([]models.WeeklyReport, int64, error) {
+	if playerID == userID {
+		return s.ListByPlayer(playerID, page, pageSize)
+	}
+
+	teamIDs := s.accessibleWeeklyReportTeamIDsForPlayer(playerID, userID)
+	if len(teamIDs) == 0 {
+		return nil, 0, ErrWeeklyReportAccessDenied
+	}
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+
+	var reports []models.WeeklyReport
+	var total int64
+	query := s.db.Model(&models.WeeklyReport{}).
+		Where("player_id = ? AND team_id IN ?", playerID, teamIDs)
+	query.Count(&total)
+
+	offset := (page - 1) * pageSize
+	err := query.Preload("Coach").Preload("Team").
+		Order("week_start DESC").
+		Offset(offset).Limit(pageSize).
+		Find(&reports).Error
+	return reports, total, err
 }
 
 // ListByTeam 列出球队周报(教练用)

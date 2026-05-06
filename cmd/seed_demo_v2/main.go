@@ -535,11 +535,25 @@ func seedPhysicalTests(tx *gorm.DB, ctx *seedContext) error {
 		weight := player.Weight
 		bmi := weight / ((height / 100) * (height / 100))
 		sprint := 4.45 + float64(i%5)*0.08
+		sprint50m := 7.65 + float64(i%5)*0.12
+		sprint100m := 15.20 + float64(i%5)*0.28
+		agilityLadder := 9.75 + float64(i%5)*0.18
+		tTest := 11.05 + float64(i%5)*0.20
+		shuttleRun := 11.70 + float64(i%5)*0.18
 		jump := 188.0 + float64(i%6)*6
+		verticalJump := 36.0 + float64(i%6)*2
 		reach := 9.0 + float64(i%5)
 		push := 22 + i%8
 		sit := 36 + i%10
-		record := models.PhysicalTestRecord{ActivityID: activity.ID, PlayerID: player.ID, ClubID: ctx.club.ID, TestDate: now.AddDate(0, 0, -9), Height: &height, Weight: &weight, BMI: &bmi, Sprint30m: &sprint, StandingLongJump: &jump, SitAndReach: &reach, PushUp: &push, SitUp: &sit, RecorderID: ctx.coaches[1].ID}
+		plank := 80 + i%6*8
+		record := models.PhysicalTestRecord{
+			ActivityID: activity.ID, PlayerID: player.ID, ClubID: ctx.club.ID,
+			TestDate: now.AddDate(0, 0, -9), Height: &height, Weight: &weight, BMI: &bmi,
+			Sprint30m: &sprint, Sprint50m: &sprint50m, Sprint100m: &sprint100m,
+			AgilityLadder: &agilityLadder, TTest: &tTest, ShuttleRun: &shuttleRun,
+			StandingLongJump: &jump, VerticalJump: &verticalJump, SitAndReach: &reach,
+			PushUp: &push, SitUp: &sit, Plank: &plank, RecorderID: ctx.coaches[1].ID,
+		}
 		if err := tx.Create(&record).Error; err != nil {
 			return err
 		}

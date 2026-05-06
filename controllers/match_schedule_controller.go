@@ -1,14 +1,16 @@
 package controllers
 
 import (
+	"encoding/json"
+	"errors"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 	"github.com/shaonianqiutan/backend/models"
 	"github.com/shaonianqiutan/backend/services"
 	"github.com/shaonianqiutan/backend/utils"
+	"gorm.io/gorm"
 )
 
 // MatchScheduleController 赛程日历控制器
@@ -202,6 +204,146 @@ func (c *MatchScheduleController) DeleteMatchSchedule(ctx *gin.Context) {
 
 	c.db.Delete(&schedule)
 	utils.SuccessResponseWithMessage(ctx, nil, "删除成功")
+}
+
+// CreateMatchSummaryFromSchedule 从已结束赛程生成比赛总结任务
+func (c *MatchScheduleController) CreateMatchSummaryFromSchedule(ctx *gin.Context) {
+	userID := ctx.GetUint("userId")
+	club, err := c.clubService.GetClubByUserID(userID)
+	if err != nil || club == nil {
+		utils.ForbiddenError(ctx, "无权限")
+		return
+	}
+
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if err != nil {
+		utils.ValidationError(ctx, "无效的赛程ID")
+		return
+	}
+
+	var schedule models.MatchSchedule
+	if err := c.db.Where("id = ? AND club_id = ?", id, club.ID).First(&schedule).Error; err != nil {
+		utils.NotFoundError(ctx, "赛程不存在")
+		return
+	}
+	if schedule.MatchSummaryID != nil {
+		utils.SuccessResponse(ctx, gin.H{
+			"id":             *schedule.MatchSummaryID,
+			"matchSummaryId": *schedule.MatchSummaryID,
+			"created":        false,
+		})
+		return
+	}
+	if schedule.Status != models.MatchScheduleStatusCompleted {
+		utils.ValidationError(ctx, "只有已结束赛程可以生成比赛总结")
+		return
+	}
+
+	var team models.Team
+	if err := c.db.Where("id = ? AND club_id = ?", schedule.TeamID, club.ID).First(&team).Error; err != nil {
+		utils.NotFoundError(ctx, "球队不存在")
+		return
+	}
+
+	var teamPlayers []models.TeamPlayer
+	if err := c.db.Where("team_id = ? AND status = ?", schedule.TeamID, "active").Find(&teamPlayers).Error; err != nil {
+		utils.ServerError(ctx, "获取参赛球员失败")
+		return
+	}
+	playerIDs := make([]uint, 0, len(teamPlayers))
+	for _, player := range teamPlayers {
+		if player.UserID > 0 {
+			playerIDs = append(playerIDs, player.UserID)
+		}
+	}
+	if len(playerIDs) == 0 {
+		utils.ValidationError(ctx, "该球队暂无在队球员，请先添加球员")
+		return
+	}
+
+	ourScore := 0
+	if schedule.HomeScore != nil {
+		ourScore = *schedule.HomeScore
+	}
+	oppScore := 0
+	if schedule.AwayScore != nil {
+		oppScore = *schedule.AwayScore
+	}
+	result := "pending"
+	if schedule.HomeScore != nil && schedule.AwayScore != nil {
+		result = "draw"
+		if ourScore > oppScore {
+			result = "win"
+		} else if ourScore < oppScore {
+			result = "lose"
+		}
+	}
+
+	playerIDsJSON, _ := json.Marshal(playerIDs)
+	summary := models.MatchSummary{
+		TeamID:      schedule.TeamID,
+		CoachID:     userID,
+		MatchName:   schedule.Name,
+		MatchDate:   schedule.MatchTime.Format("2006-01-02"),
+		Opponent:    schedule.Opponent,
+		Location:    "home",
+		MatchFormat: "11人制",
+		OurScore:    ourScore,
+		OppScore:    oppScore,
+		Result:      result,
+		PlayerIDs:   string(playerIDsJSON),
+		PlayerCount: len(playerIDs),
+		Status:      "pending",
+	}
+
+	alreadyLinkedErr := errors.New("match schedule already linked to summary")
+	if err := c.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&summary).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&models.MatchSchedule{}).
+			Where("id = ? AND match_summary_id IS NULL", schedule.ID).
+			Update("match_summary_id", summary.ID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return alreadyLinkedErr
+		}
+		return nil
+	}); err != nil {
+		if errors.Is(err, alreadyLinkedErr) {
+			var latest models.MatchSchedule
+			if reloadErr := c.db.First(&latest, schedule.ID).Error; reloadErr == nil && latest.MatchSummaryID != nil {
+				utils.SuccessResponse(ctx, gin.H{
+					"id":             *latest.MatchSummaryID,
+					"matchSummaryId": *latest.MatchSummaryID,
+					"created":        false,
+				})
+				return
+			}
+		}
+		utils.ServerError(ctx, "创建比赛总结失败")
+		return
+	}
+
+	go func() {
+		notificationHelper := NewNotificationHelper(c.db)
+		creatorName := "俱乐部管理员"
+		var creator models.User
+		if err := c.db.First(&creator, userID).Error; err == nil && creator.Name != "" {
+			creatorName = creator.Name
+		}
+		for _, playerID := range playerIDs {
+			notificationHelper.NotifyMatchSummaryCreated(playerID, creatorName, summary.MatchName, summary.ID)
+		}
+	}()
+
+	utils.SuccessResponse(ctx, gin.H{
+		"id":             summary.ID,
+		"matchSummaryId": summary.ID,
+		"created":        true,
+	})
 }
 
 func formatMatchSchedule(s *models.MatchSchedule) gin.H {
