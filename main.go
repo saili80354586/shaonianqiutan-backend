@@ -52,7 +52,11 @@ func main() {
 		&models.Order{},
 		&models.OrderAssignment{},
 		&models.OrderStatusHistory{},
+		&models.Analyst{},
 		&models.AnalystApplication{},
+		&models.UserRoleRecord{},
+		&models.RoleApplication{},
+		&models.Scout{},
 		&models.Club{},
 		&models.ClubPlayer{},
 		&models.Team{},
@@ -108,6 +112,9 @@ func main() {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
 	log.Println("数据库迁移完成")
+	if err := models.BackfillUserRoleRecords(db); err != nil {
+		log.Printf("用户多身份记录回填失败: %v", err)
+	}
 	if err := models.BackfillOrderAssignmentsFromOrders(db); err != nil {
 		log.Printf("订单派发记录回填失败: %v", err)
 	}
@@ -229,7 +236,7 @@ func main() {
 
 		// ========== Service 初始化 ==========
 		smsService := services.NewSmsService(smsCodeRepo)
-		authService := services.NewAuthService(userRepo, smsService, db)
+		authService := services.NewAuthService(userRepo, analystRepo, orderRepo, assignmentRepo, statusHistoryRepo, smsService, db)
 		orderService := services.NewOrderService(orderRepo, analystRepo, reportRepo, userRepo)
 		reportService := services.NewReportService(reportRepo, userRepo)
 		analystService := services.NewAnalystService(analystRepo, orderRepo, userRepo, assignmentRepo, statusHistoryRepo)
@@ -252,6 +259,7 @@ func main() {
 		// ========== Controller 初始化 ==========
 		authController := controllers.NewAuthController(authService, smsService)
 		userController := controllers.NewUserController(authService, physicalTestService, db)
+		accountRoleController := controllers.NewAccountRoleController(db)
 		orderController := controllers.NewOrderController(orderService)
 		reportController := controllers.NewReportController(reportService, authService, db)
 		analystController := controllers.NewAnalystController(analystService, db)
@@ -288,6 +296,7 @@ func main() {
 		// ========== 设置路由 ==========
 		routes.SetupAuthRoutes(api, authController)
 		routes.SetupUserRoutes(api, userController)
+		routes.SetupAccountRoleRoutes(api, accountRoleController)
 		routes.SetupOrderRoutes(api, orderController)
 		routes.SetupReportRoutes(api, reportController)
 		routes.SetupAnalystRoutes(api, analystController)

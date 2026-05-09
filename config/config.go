@@ -3,9 +3,17 @@ package config
 import (
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
+)
+
+const (
+	PaymentModeMock = "mock"
+	PaymentModeReal = "real"
+	SmsModeMock     = "mock"
+	SmsModeReal     = "real"
 )
 
 // LoadEnv 加载环境变量
@@ -49,8 +57,120 @@ func IsDevMode() bool {
 	return mode == "development"
 }
 
+func normalizePaymentMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", PaymentModeMock:
+		return PaymentModeMock
+	case PaymentModeReal:
+		return PaymentModeReal
+	default:
+		return ""
+	}
+}
+
+// GetPaymentMode 获取支付模式。未配置时默认 mock，便于本地和演示环境继续走通闭环。
+func GetPaymentMode() string {
+	mode := normalizePaymentMode(os.Getenv("PAYMENT_MODE"))
+	if mode == "" {
+		log.Printf("Warning: invalid PAYMENT_MODE=%q, falling back to %s", os.Getenv("PAYMENT_MODE"), PaymentModeMock)
+		return PaymentModeMock
+	}
+	return mode
+}
+
+// IsMockPaymentMode 是否启用模拟支付模式
+func IsMockPaymentMode() bool {
+	return GetPaymentMode() == PaymentModeMock
+}
+
+func normalizeSmsMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case SmsModeMock:
+		return SmsModeMock
+	case SmsModeReal:
+		return SmsModeReal
+	default:
+		return ""
+	}
+}
+
+// GetSmsMode 获取短信模式。本地开发默认 mock；非开发环境必须通过 SMS_MODE 显式选择。
+func GetSmsMode() string {
+	rawMode := strings.TrimSpace(os.Getenv("SMS_MODE"))
+	if rawMode == "" {
+		if configIsDevelopment() {
+			return SmsModeMock
+		}
+		return SmsModeReal
+	}
+
+	mode := normalizeSmsMode(rawMode)
+	if mode == "" {
+		log.Printf("Warning: invalid SMS_MODE=%q, falling back to %s", os.Getenv("SMS_MODE"), SmsModeMock)
+		return SmsModeMock
+	}
+	return mode
+}
+
+func IsMockSmsMode() bool {
+	return IsDevMode() || GetSmsMode() == SmsModeMock
+}
+
+func IsAnalystRegistrationAutoApproved() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("ANALYST_REGISTRATION_AUTO_APPROVE")))
+	if value == "" {
+		return configIsDevelopment()
+	}
+	return value == "1" || value == "true" || value == "yes"
+}
+
+func IsAnalystDefaultDemoOrderEnabled() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("ANALYST_DEFAULT_DEMO_ORDER_ENABLED")))
+	return value == "1" || value == "true" || value == "yes"
+}
+
+func GetAnalystDefaultDemoOrderTemplateOrderID() (uint, error) {
+	raw := strings.TrimSpace(os.Getenv("ANALYST_DEFAULT_DEMO_ORDER_TEMPLATE_ORDER_ID"))
+	if raw == "" {
+		return 0, nil
+	}
+
+	parsed, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil || parsed == 0 {
+		return 0, strconv.ErrSyntax
+	}
+	return uint(parsed), nil
+}
+
+func configIsDevelopment() bool {
+	return os.Getenv("NODE_ENV") == "development"
+}
+
 // ValidateRuntimeConfig 校验运行环境，防止漏配时误按开发模式启动
 func ValidateRuntimeConfig() {
+	if rawMode := os.Getenv("PAYMENT_MODE"); strings.TrimSpace(rawMode) != "" && normalizePaymentMode(rawMode) == "" {
+		log.Fatalf("FATAL: PAYMENT_MODE must be one of %q or %q, got %q", PaymentModeMock, PaymentModeReal, rawMode)
+	}
+	if rawMode := os.Getenv("SMS_MODE"); strings.TrimSpace(rawMode) != "" && normalizeSmsMode(rawMode) == "" {
+		log.Fatalf("FATAL: SMS_MODE must be one of %q or %q, got %q", SmsModeMock, SmsModeReal, rawMode)
+	}
+
+	if !IsDevMode() && strings.TrimSpace(os.Getenv("PAYMENT_MODE")) == "" {
+		log.Fatalf("FATAL: PAYMENT_MODE environment variable must be set to %q or %q outside development", PaymentModeMock, PaymentModeReal)
+	}
+	if !IsDevMode() && strings.TrimSpace(os.Getenv("SMS_MODE")) == "" {
+		log.Fatalf("FATAL: SMS_MODE environment variable must be set to %q or %q outside development", SmsModeMock, SmsModeReal)
+	}
+	if !IsDevMode() && strings.TrimSpace(os.Getenv("ANALYST_REGISTRATION_AUTO_APPROVE")) == "" {
+		log.Fatalf("FATAL: ANALYST_REGISTRATION_AUTO_APPROVE must be explicitly set to true or false outside development")
+	}
+	if IsAnalystDefaultDemoOrderEnabled() {
+		templateOrderID, err := GetAnalystDefaultDemoOrderTemplateOrderID()
+		if err != nil || templateOrderID == 0 {
+			log.Fatalf("FATAL: ANALYST_DEFAULT_DEMO_ORDER_TEMPLATE_ORDER_ID must be a positive integer when ANALYST_DEFAULT_DEMO_ORDER_ENABLED=true")
+		}
+	}
+
 	if IsDevMode() {
 		return
 	}

@@ -233,11 +233,18 @@ func (r *TeamRepository) GetInvitations(teamID uint, status string) ([]models.Te
 // SearchUsers 搜索用户（用于邀请）
 func (r *TeamRepository) SearchUsers(keyword string, userType string) ([]models.User, error) {
 	var users []models.User
-	query := r.db.Where("phone LIKE ? OR nickname LIKE ? OR name LIKE ?", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+	query := r.db.Model(&models.User{}).
+		Where("phone LIKE ? OR nickname LIKE ? OR name LIKE ?", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
 	if userType != "" {
 		// 球员在数据库中 role 为 "user"，但前端传入 "player"，需要兼容处理
 		if userType == "player" {
 			query = query.Where("role IN (?)", []string{"user", "player"})
+		} else if userType == string(models.RoleCoach) {
+			query = query.Where(r.db.Where("role = ?", userType).Or(
+				"id IN (SELECT user_id FROM user_roles WHERE role = ? AND status IN ? AND deleted_at IS NULL)",
+				userType,
+				[]string{"active", "approved"},
+			))
 		} else {
 			query = query.Where("role = ?", userType)
 		}

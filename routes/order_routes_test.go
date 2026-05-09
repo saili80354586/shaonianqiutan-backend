@@ -24,3 +24,21 @@ func TestLegacyOrderPaymentRouteIsNotRegistered(t *testing.T) {
 		t.Fatalf("POST /api/orders/1/payment status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
+
+func TestOrderCreateRouteSupportsSlashVariants(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	api := router.Group("/api")
+	SetupOrderRoutes(api, controllers.NewOrderController(nil))
+
+	for _, path := range []string{"/api/orders", "/api/orders/"} {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("POST %s status = %d, want %d", path, rec.Code, http.StatusUnauthorized)
+		}
+	}
+}

@@ -502,7 +502,12 @@ func (ctrl *AnalystController) DownloadReportDoc(c *gin.Context) {
 	}
 
 	// 文字报告订单：从 reports 表获取 MD 文档
-	if order.Report == nil {
+	report, err := ctrl.findReportForOrder(order)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取报告失败")
+		return
+	}
+	if report == nil {
 		utils.Error(c, http.StatusNotFound, "报告不存在")
 		return
 	}
@@ -510,10 +515,10 @@ func (ctrl *AnalystController) DownloadReportDoc(c *gin.Context) {
 	var filePath string
 	var fileName string
 	if docType == "rating" {
-		filePath = order.Report.RatingReportMD
+		filePath = report.RatingReportMD
 		fileName = fmt.Sprintf("评分报告_%s.md", order.OrderNo)
 	} else {
-		filePath = order.Report.PlayerInfoMD
+		filePath = report.PlayerInfoMD
 		fileName = fmt.Sprintf("球员基础信息_%s.md", order.PlayerName)
 	}
 
@@ -564,21 +569,33 @@ func (ctrl *AnalystController) DownloadAIReport(c *gin.Context) {
 		return
 	}
 
-	if order.Report == nil {
+	report, err := ctrl.findReportForOrder(order)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取报告失败")
+		return
+	}
+	if report == nil {
 		utils.Error(c, http.StatusNotFound, "报告不存在")
 		return
 	}
 
 	var filePath string
 	if reportType == "video" {
-		filePath = "./uploads/reports/" + strings.TrimPrefix(order.Report.AIVideoURL, "/uploads/reports/")
-		if order.Report.AIVideoURL == "" {
+		filePath = "./uploads/reports/" + strings.TrimPrefix(report.AIVideoURL, "/uploads/reports/")
+		if report.AIVideoURL == "" {
 			utils.Error(c, http.StatusNotFound, "AI 视频分析尚未上传")
 			return
 		}
 	} else {
-		filePath = "./uploads/reports/" + strings.TrimPrefix(order.Report.AIReportURL, "/uploads/reports/")
-		if order.Report.AIReportURL == "" {
+		if report.AIReportURL == "" && strings.TrimSpace(report.Content) != "" {
+			fileName := fmt.Sprintf("AI分析报告_%s.md", order.OrderNo)
+			c.Header("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", fileName))
+			c.Header("Content-Type", "text/markdown; charset=utf-8")
+			c.String(http.StatusOK, report.Content)
+			return
+		}
+		filePath = "./uploads/reports/" + strings.TrimPrefix(report.AIReportURL, "/uploads/reports/")
+		if report.AIReportURL == "" {
 			utils.Error(c, http.StatusNotFound, "AI 报告尚未上传")
 			return
 		}
@@ -592,6 +609,117 @@ func (ctrl *AnalystController) DownloadAIReport(c *gin.Context) {
 	fileName := filepath.Base(filePath)
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", fileName))
 	c.File(filePath)
+}
+
+func (ctrl *AnalystController) findReportForOrder(order *models.Order) (*models.Report, error) {
+	if order == nil {
+		return nil, nil
+	}
+	if order.Report != nil {
+		return order.Report, nil
+	}
+
+	var report models.Report
+	if order.ReportID != nil {
+		if err := ctrl.db.First(&report, *order.ReportID).Error; err != nil && err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+		if report.ID > 0 {
+			return &report, nil
+		}
+	}
+
+	if err := ctrl.db.Where("order_id = ?", order.ID).First(&report).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &report, nil
+}
+
+// UploadAIReport 上传分析师本地编辑后的 AI 报告 Word 终稿
+func (ctrl *AnalystController) UploadAIReport(c *gin.Context) {
+	analystID, exists := c.Get("analystId")
+	if !exists {
+		utils.Error(c, http.StatusUnauthorized, "未认证")
+		return
+	}
+
+	orderIDStr := c.Param("id")
+	orderID, err := strconv.ParseUint(orderIDStr, 10, 32)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的订单ID")
+		return
+	}
+
+	order, err := ctrl.analystService.GetOrderByID(uint(orderID))
+	if err != nil {
+		utils.Error(c, http.StatusForbidden, err.Error())
+		return
+	}
+	if order.AnalystID == nil || *order.AnalystID != analystID.(uint) {
+		utils.Error(c, http.StatusForbidden, "无权操作该订单")
+		return
+	}
+
+	report, err := ctrl.findReportForOrder(order)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取报告失败")
+		return
+	}
+	if report == nil {
+		utils.Error(c, http.StatusNotFound, "报告不存在，请先生成球探报告")
+		return
+	}
+	if report.Status == models.ReportStatusCompleted {
+		utils.Error(c, http.StatusBadRequest, "已交付报告不能直接覆盖，请重新提交审核")
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "请选择要上传的 Word 报告")
+		return
+	}
+	if file.Size > 50<<20 {
+		utils.Error(c, http.StatusBadRequest, "文件大小不能超过50MB")
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	if ext != ".doc" && ext != ".docx" {
+		utils.Error(c, http.StatusBadRequest, "仅支持 .doc 或 .docx 文件")
+		return
+	}
+
+	uploadDir := "./uploads/reports"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "创建上传目录失败")
+		return
+	}
+
+	fileName := fmt.Sprintf("analyst_ai_report_%d_%d%s", report.ID, time.Now().UnixNano(), ext)
+	filePath := filepath.Join(uploadDir, fileName)
+	if err := c.SaveUploadedFile(file, filePath); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "保存文件失败")
+		return
+	}
+
+	reportURL := "/uploads/reports/" + fileName
+	if err := ctrl.db.Model(&models.Report{}).Where("id = ?", report.ID).Update("ai_report_url", reportURL).Error; err != nil {
+		utils.Error(c, http.StatusInternalServerError, "更新报告失败")
+		return
+	}
+
+	utils.Success(c, "AI 报告已上传", gin.H{
+		"report_id":      report.ID,
+		"ai_report_url":  reportURL,
+		"original_name":  file.Filename,
+		"order_id":       order.ID,
+		"review_status":  report.Status,
+		"requires_audit": report.Status != models.ReportStatusCompleted,
+	})
 }
 
 // CreateInquiry 提交咨询意向

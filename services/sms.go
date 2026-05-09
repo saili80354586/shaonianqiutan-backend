@@ -37,21 +37,15 @@ func (s *SmsService) GenerateCode() string {
 
 // SendCode 发送短信验证码
 func (s *SmsService) SendCode(phone, code string) (*SendCodeResult, error) {
-	// 开发模式：直接返回验证码，不实际发送短信
-	if config.IsDevMode() {
+	// mock 短信模式：直接返回验证码，不实际发送短信，用于当前测试阶段注册闭环。
+	if config.IsMockSmsMode() {
 		return &SendCodeResult{
 			DevMode: true,
 			Code:    code,
 		}, nil
 	}
 
-	// TODO: 生产环境对接实际短信服务商
-	// 这里需要根据实际使用的短信服务商进行对接
-	// 阿里云、腾讯云、华为云等
-
-	return &SendCodeResult{
-		DevMode: false,
-	}, nil
+	return nil, fmt.Errorf("短信服务未配置")
 }
 
 // VerifyCode 验证验证码

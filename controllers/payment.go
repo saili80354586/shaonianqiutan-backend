@@ -24,7 +24,15 @@ func NewPaymentController(orderRepo *models.OrderRepository) *PaymentController 
 }
 
 func paymentNotConfigured(c *gin.Context) {
-	utils.Error(c, http.StatusServiceUnavailable, "生产支付服务尚未接入")
+	utils.Error(c, http.StatusServiceUnavailable, "当前支付模式未开启模拟支付，真实支付服务尚未接入")
+}
+
+func ensureMockPaymentMode(c *gin.Context) bool {
+	if config.IsMockPaymentMode() {
+		return true
+	}
+	paymentNotConfigured(c)
+	return false
 }
 
 // CreatePaymentRequest 创建支付请求
@@ -36,8 +44,7 @@ type CreatePaymentRequest struct {
 
 // CreatePayment 创建支付
 func (ctrl *PaymentController) CreatePayment(c *gin.Context) {
-	if !config.IsDevMode() {
-		paymentNotConfigured(c)
+	if !ensureMockPaymentMode(c) {
 		return
 	}
 
@@ -93,8 +100,7 @@ type SimulatePayRequest struct {
 
 // SimulatePay 模拟支付（过渡方案）
 func (ctrl *PaymentController) SimulatePay(c *gin.Context) {
-	if !config.IsDevMode() {
-		utils.Error(c, http.StatusForbidden, "模拟支付仅允许在开发环境使用")
+	if !ensureMockPaymentMode(c) {
 		return
 	}
 
@@ -156,8 +162,7 @@ func (ctrl *PaymentController) SimulatePay(c *gin.Context) {
 
 // GetPaymentStatus 获取支付状态
 func (ctrl *PaymentController) GetPaymentStatus(c *gin.Context) {
-	if !config.IsDevMode() {
-		paymentNotConfigured(c)
+	if !ensureMockPaymentMode(c) {
 		return
 	}
 
@@ -222,8 +227,7 @@ func (ctrl *PaymentController) GetOrderPaymentStatus(c *gin.Context) {
 
 // PaymentCallback 支付回调
 func (ctrl *PaymentController) PaymentCallback(c *gin.Context) {
-	if !config.IsDevMode() {
-		paymentNotConfigured(c)
+	if !ensureMockPaymentMode(c) {
 		return
 	}
 
@@ -233,8 +237,7 @@ func (ctrl *PaymentController) PaymentCallback(c *gin.Context) {
 
 // Refund 申请退款
 func (ctrl *PaymentController) Refund(c *gin.Context) {
-	if !config.IsDevMode() {
-		paymentNotConfigured(c)
+	if !ensureMockPaymentMode(c) {
 		return
 	}
 

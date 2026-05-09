@@ -1,9 +1,12 @@
 package services
 
 import (
+	"archive/zip"
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -455,6 +458,613 @@ func (g *ReportGenerator) GenerateFromVideoAnalysis(analysis *models.VideoAnalys
 	return ratingMDPath, playerInfoMDPath, nil
 }
 
+// GenerateVideoAnalysisWordReport 生成视频分析正式 Word 报告。
+// 返回值为可写入 reports.ai_report_url 的 Web 路径，文件实体写入 reportsDir。
+func (g *ReportGenerator) GenerateVideoAnalysisWordReport(analysis *models.VideoAnalysis, analystName string, user *models.User) (string, error) {
+	if analysis == nil {
+		return "", fmt.Errorf("分析记录不能为空")
+	}
+	if err := g.EnsureDir(); err != nil {
+		return "", fmt.Errorf("创建目录失败: %w", err)
+	}
+
+	playerName := firstNonEmptyReportText(analysis.PlayerName, userName(user), "未知球员")
+	version := analysis.AIReportVersion
+	if version <= 0 {
+		version = 1
+	}
+	fileName := fmt.Sprintf(
+		"少年球探_视频分析报告_%s_订单%d_v%d.docx",
+		sanitizeReportFileNamePart(playerName),
+		analysis.OrderID,
+		version,
+	)
+	fullPath := filepath.Join(g.reportsDir, fileName)
+
+	paragraphs := buildVideoAnalysisWordParagraphs(analysis, analystName, user, playerName, version)
+	if err := writeSimpleDocx(fullPath, paragraphs); err != nil {
+		return "", fmt.Errorf("写入视频分析 Word 报告失败: %w", err)
+	}
+	return "/uploads/reports/" + fileName, nil
+}
+
+// GenerateVideoAnalysisPDFReport 生成视频分析正式 PDF 报告。
+// 返回值为可写入 reports.pdf_url 的 Web 路径，文件实体写入 reportsDir。
+func (g *ReportGenerator) GenerateVideoAnalysisPDFReport(analysis *models.VideoAnalysis, analystName string, user *models.User) (string, error) {
+	if analysis == nil {
+		return "", fmt.Errorf("分析记录不能为空")
+	}
+	if err := g.EnsureDir(); err != nil {
+		return "", fmt.Errorf("创建目录失败: %w", err)
+	}
+
+	playerName := firstNonEmptyReportText(analysis.PlayerName, userName(user), "未知球员")
+	version := analysis.AIReportVersion
+	if version <= 0 {
+		version = 1
+	}
+	fileName := fmt.Sprintf(
+		"少年球探_视频分析报告_%s_订单%d_v%d.pdf",
+		sanitizeReportFileNamePart(playerName),
+		analysis.OrderID,
+		version,
+	)
+	fullPath := filepath.Join(g.reportsDir, fileName)
+
+	paragraphs := buildVideoAnalysisWordParagraphs(analysis, analystName, user, playerName, version)
+	if err := writeSimplePDF(fullPath, paragraphs); err != nil {
+		return "", fmt.Errorf("写入视频分析 PDF 报告失败: %w", err)
+	}
+	return "/uploads/reports/" + fileName, nil
+}
+
+type docxParagraph struct {
+	Text    string
+	Bold    bool
+	Center  bool
+	Size    int
+	Spacing int
+}
+
+func buildVideoAnalysisWordParagraphs(analysis *models.VideoAnalysis, analystName string, user *models.User, playerName string, version int) []docxParagraph {
+	paragraphs := []docxParagraph{
+		{Text: "少年球探视频分析报告", Bold: true, Center: true, Size: 36, Spacing: 240},
+		{Text: fmt.Sprintf("球员：%s", playerName), Center: true, Size: 24, Spacing: 120},
+		{Text: fmt.Sprintf("订单：%d  版本：v%d", analysis.OrderID, version), Center: true, Size: 20, Spacing: 80},
+		{Text: fmt.Sprintf("模板：%s", VideoAnalysisReportTemplateVersion), Center: true, Size: 18, Spacing: 240},
+		{},
+		{Text: "一、球员与比赛信息", Bold: true, Size: 26, Spacing: 160},
+	}
+
+	appendNonEmptyDocxLine := func(label string, value any) {
+		text := strings.TrimSpace(fmt.Sprint(value))
+		if text == "" || text == "0" || text == "0.0" {
+			return
+		}
+		paragraphs = append(paragraphs, docxParagraph{Text: fmt.Sprintf("%s：%s", label, text), Size: 21, Spacing: 80})
+	}
+
+	appendNonEmptyDocxLine("姓名", playerName)
+	if analysis.PlayerAge > 0 {
+		appendNonEmptyDocxLine("年龄", fmt.Sprintf("%d岁", analysis.PlayerAge))
+	} else if user != nil && user.Age > 0 {
+		appendNonEmptyDocxLine("年龄", fmt.Sprintf("%d岁", user.Age))
+	}
+	appendNonEmptyDocxLine("位置", firstNonEmptyReportText(analysis.PlayerPosition, userPosition(user)))
+	appendNonEmptyDocxLine("惯用脚", firstNonEmptyReportText(analysis.PlayerFoot, userFoot(user)))
+	appendNonEmptyDocxLine("当前球队", firstNonEmptyReportText(analysis.PlayerTeam, userClub(user)))
+	appendNonEmptyDocxLine("比赛名称", analysis.MatchName)
+	appendNonEmptyDocxLine("比赛日期", analysis.MatchDate)
+	appendNonEmptyDocxLine("对手", analysis.Opponent)
+	if analysis.PlayTime > 0 {
+		appendNonEmptyDocxLine("出场时间", fmt.Sprintf("%d分钟", analysis.PlayTime))
+	}
+	appendNonEmptyDocxLine("分析师", firstNonEmptyReportText(analystName, "未知分析师"))
+
+	paragraphs = append(paragraphs,
+		docxParagraph{},
+		docxParagraph{Text: "二、评分概览", Bold: true, Size: 26, Spacing: 160},
+		docxParagraph{Text: fmt.Sprintf("综合评分：%.1f / 100", analysis.OverallScore), Size: 21, Spacing: 80},
+		docxParagraph{Text: fmt.Sprintf("潜力等级：%s", models.GetPotentialLevel(analysis.OverallScore)), Size: 21, Spacing: 80},
+	)
+	if strings.TrimSpace(analysis.Summary) != "" {
+		paragraphs = append(paragraphs, docxParagraph{Text: "综合评价", Bold: true, Size: 23, Spacing: 120})
+		paragraphs = append(paragraphs, markdownTextToDocxParagraphs(analysis.Summary)...)
+	}
+
+	appendDocxListSection := func(title, text string) {
+		items := splitReportTextItems(text)
+		if len(items) == 0 {
+			return
+		}
+		paragraphs = append(paragraphs, docxParagraph{Text: title, Bold: true, Size: 23, Spacing: 120})
+		for _, item := range items {
+			paragraphs = append(paragraphs, docxParagraph{Text: "• " + item, Size: 21, Spacing: 60})
+		}
+	}
+	appendDocxListSection("核心优势", analysis.Strengths)
+	appendDocxListSection("待提升领域", analysis.Weaknesses)
+	appendDocxListSection("重点改进建议", analysis.Improvements)
+	appendDocxListSection("分析师补充说明", analysis.AnalystNotes)
+
+	if strings.TrimSpace(analysis.AIReport) != "" {
+		paragraphs = append(paragraphs,
+			docxParagraph{},
+			docxParagraph{Text: "三、AI报告正文", Bold: true, Size: 26, Spacing: 160},
+		)
+		paragraphs = append(paragraphs, markdownTextToDocxParagraphs(analysis.AIReport)...)
+	}
+
+	paragraphs = append(paragraphs,
+		docxParagraph{},
+		docxParagraph{Text: "声明：本报告基于分析师录入的比赛信息、评分、高光片段与AI辅助生成内容形成，供青少年足球训练与成长规划参考，不作为医学、升学或职业签约承诺。", Size: 18, Spacing: 120},
+		docxParagraph{Text: fmt.Sprintf("生成时间：%s", time.Now().Format("2006-01-02 15:04:05")), Center: true, Size: 18, Spacing: 80},
+	)
+
+	return paragraphs
+}
+
+func writeSimpleDocx(path string, paragraphs []docxParagraph) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	zw := zip.NewWriter(file)
+	if err := writeDocxZipEntry(zw, "[Content_Types].xml", docxContentTypesXML); err != nil {
+		_ = zw.Close()
+		return err
+	}
+	if err := writeDocxZipEntry(zw, "_rels/.rels", docxRelsXML); err != nil {
+		_ = zw.Close()
+		return err
+	}
+	if err := writeDocxZipEntry(zw, "word/document.xml", buildDocxDocumentXML(paragraphs)); err != nil {
+		_ = zw.Close()
+		return err
+	}
+	return zw.Close()
+}
+
+func writeDocxZipEntry(zw *zip.Writer, name string, content string) error {
+	header := &zip.FileHeader{Name: name, Method: zip.Deflate}
+	w, err := zw.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write([]byte(content))
+	return err
+}
+
+func writeSimplePDF(path string, paragraphs []docxParagraph) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	pages := buildPDFPages(paragraphs)
+	if len(pages) == 0 {
+		pages = []pdfPage{{Lines: []pdfLine{{Text: "少年球探视频分析报告", Size: 20, Center: true}}}}
+	}
+
+	type pdfObject struct {
+		Body []byte
+	}
+
+	objects := make([]pdfObject, 0, 6+len(pages)*2)
+	objects = append(objects,
+		pdfObject{Body: []byte("<< /Type /Catalog /Pages 2 0 R >>")},
+	)
+
+	pageRefs := make([]int, len(pages))
+
+	objects = append(objects,
+		pdfObject{Body: []byte(fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", buildPDFKidRefs(len(pages)), len(pages)))},
+		pdfObject{Body: []byte("<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [4 0 R] >>")},
+		pdfObject{Body: []byte("<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 0 >> /DW 1000 /FontDescriptor 5 0 R >>")},
+		pdfObject{Body: []byte("<< /Type /FontDescriptor /FontName /STSong-Light /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>")},
+	)
+
+	pageObjectBase := 6
+	for i, page := range pages {
+		content := page.render()
+		contentObjectNumber := pageObjectBase + i*2 + 1
+		pageObjectNumber := pageObjectBase + i*2
+		pageBody := fmt.Sprintf(
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents %d 0 R /Resources << /Font << /F1 3 0 R >> >> >>",
+			contentObjectNumber,
+		)
+		objects = append(objects,
+			pdfObject{Body: []byte(pageBody)},
+			pdfObject{Body: []byte(content)},
+		)
+		pageRefs[i] = pageObjectNumber
+	}
+
+	// 重建 Pages object，确保引用号正确
+	objects[1].Body = []byte(fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", buildPDFRefs(pageRefs), len(pages)))
+
+	var buf bytes.Buffer
+	buf.WriteString("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n")
+
+	offsets := make([]int, 0, len(objects)+1)
+	offsets = append(offsets, 0)
+	for idx, object := range objects {
+		offsets = append(offsets, buf.Len())
+		fmt.Fprintf(&buf, "%d 0 obj\n", idx+1)
+		buf.Write(object.Body)
+		buf.WriteString("\nendobj\n")
+	}
+
+	xrefStart := buf.Len()
+	fmt.Fprintf(&buf, "xref\n0 %d\n", len(objects)+1)
+	buf.WriteString("0000000000 65535 f \n")
+	for _, off := range offsets[1:] {
+		fmt.Fprintf(&buf, "%010d 00000 n \n", off)
+	}
+	fmt.Fprintf(&buf, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n", len(objects)+1, xrefStart)
+	buf.WriteString("%%EOF\n")
+
+	_, err = file.Write(buf.Bytes())
+	return err
+}
+
+type pdfLine struct {
+	Text   string
+	Size   float64
+	Center bool
+}
+
+type pdfPage struct {
+	Lines []pdfLine
+}
+
+func (p pdfPage) render() string {
+	var buf strings.Builder
+	buf.WriteString("<< /Length ")
+	content := p.contentBytes()
+	buf.WriteString(strconv.Itoa(len(content)))
+	buf.WriteString(" >>\nstream\n")
+	buf.Write(content)
+	buf.WriteString("\nendstream")
+	return buf.String()
+}
+
+func (p pdfPage) contentBytes() []byte {
+	var buf strings.Builder
+	y := 800.0
+	leftMargin := 54.0
+	rightMargin := 54.0
+	pageWidth := 595.0
+	usableWidth := pageWidth - leftMargin - rightMargin
+	for _, line := range p.Lines {
+		if line.Text == "" {
+			y -= lineHeightForPDF(line.Size) * 0.7
+			continue
+		}
+		wrapped := wrapPDFText(line.Text, line.Size, usableWidth)
+		for _, item := range wrapped {
+			if y < 60 {
+				break
+			}
+			x := leftMargin
+			if line.Center {
+				width := estimatePDFTextWidth(item, line.Size)
+				if width < usableWidth {
+					x = leftMargin + (usableWidth-width)/2
+				}
+			}
+			buf.WriteString("BT ")
+			buf.WriteString(fmt.Sprintf("/F1 %.1f Tf ", line.sizeOrDefault()))
+			buf.WriteString(fmt.Sprintf("1 0 0 1 %.2f %.2f Tm ", x, y))
+			buf.WriteString("<")
+			buf.WriteString(encodeUTF16BEHex(item))
+			buf.WriteString("> Tj ET\n")
+			y -= lineHeightForPDF(line.Size)
+		}
+		y -= lineHeightForPDF(line.Size) * 0.25
+	}
+	return []byte(buf.String())
+}
+
+func (l pdfLine) sizeOrDefault() float64 {
+	if l.Size <= 0 {
+		return 18
+	}
+	return l.Size
+}
+
+func buildPDFPages(paragraphs []docxParagraph) []pdfPage {
+	const (
+		pageWidth    = 595.0
+		leftMargin   = 54.0
+		rightMargin  = 54.0
+		topMargin    = 42.0
+		bottomMargin = 60.0
+	)
+	usableWidth := pageWidth - leftMargin - rightMargin
+	pages := make([]pdfPage, 0, 2)
+	current := pdfPage{Lines: []pdfLine{}}
+	currentY := 800.0
+	appendPage := func() {
+		if len(current.Lines) > 0 {
+			pages = append(pages, current)
+		}
+		current = pdfPage{Lines: []pdfLine{}}
+		currentY = 800.0
+	}
+
+	_ = topMargin
+	for _, paragraph := range paragraphs {
+		if strings.TrimSpace(paragraph.Text) == "" {
+			current.Lines = append(current.Lines, pdfLine{Text: "", Size: float64(paragraph.Size)})
+			currentY -= lineHeightForPDF(float64(paragraph.Size)) * 0.5
+			continue
+		}
+		size := float64(paragraph.Size)
+		if size <= 0 {
+			size = 18
+		}
+		wrapped := wrapPDFText(paragraph.Text, size, usableWidth)
+		if len(wrapped) == 0 {
+			wrapped = []string{paragraph.Text}
+		}
+		for _, line := range wrapped {
+			if currentY < bottomMargin+lineHeightForPDF(size) {
+				appendPage()
+			}
+			current.Lines = append(current.Lines, pdfLine{Text: line, Size: size, Center: paragraph.Center})
+			currentY -= lineHeightForPDF(size)
+		}
+		currentY -= lineHeightForPDF(size) * 0.25
+	}
+	if len(current.Lines) > 0 {
+		pages = append(pages, current)
+	}
+	return pages
+}
+
+func buildPDFKidRefs(pageCount int) string {
+	refs := make([]string, 0, pageCount)
+	for i := 0; i < pageCount; i++ {
+		refs = append(refs, fmt.Sprintf("%d 0 R", 6+i*2))
+	}
+	return strings.Join(refs, " ")
+}
+
+func buildPDFRefs(pageRefs []int) string {
+	refs := make([]string, 0, len(pageRefs))
+	for _, ref := range pageRefs {
+		refs = append(refs, fmt.Sprintf("%d 0 R", ref))
+	}
+	return strings.Join(refs, " ")
+}
+
+func wrapPDFText(text string, size float64, usableWidth float64) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	maxUnits := usableWidth / size
+	if maxUnits < 8 {
+		maxUnits = 8
+	}
+	paragraphs := strings.Split(text, "\n")
+	lines := make([]string, 0, len(paragraphs))
+	for _, paragraph := range paragraphs {
+		trimmed := strings.TrimSpace(paragraph)
+		if trimmed == "" {
+			lines = append(lines, "")
+			continue
+		}
+		runes := []rune(trimmed)
+		current := strings.Builder{}
+		currentWidth := 0.0
+		for _, r := range runes {
+			w := pdfRuneWidth(r)
+			if currentWidth+w > maxUnits && current.Len() > 0 {
+				lines = append(lines, current.String())
+				current.Reset()
+				currentWidth = 0
+			}
+			current.WriteRune(r)
+			currentWidth += w
+		}
+		if current.Len() > 0 {
+			lines = append(lines, current.String())
+		}
+	}
+	return lines
+}
+
+func lineHeightForPDF(size float64) float64 {
+	if size <= 0 {
+		size = 18
+	}
+	return size * 1.45
+}
+
+func estimatePDFTextWidth(text string, size float64) float64 {
+	width := 0.0
+	for _, r := range text {
+		width += pdfRuneWidth(r)
+	}
+	return width * size
+}
+
+func pdfRuneWidth(r rune) float64 {
+	switch {
+	case r == ' ':
+		return 0.35
+	case r < 128:
+		return 0.55
+	default:
+		return 1.0
+	}
+}
+
+func encodeUTF16BEHex(text string) string {
+	data := []byte{0xFE, 0xFF}
+	for _, r := range text {
+		data = append(data, byte(r>>8), byte(r))
+	}
+	return strings.ToUpper(hex.EncodeToString(data))
+}
+
+func buildDocxDocumentXML(paragraphs []docxParagraph) string {
+	var buf strings.Builder
+	buf.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`)
+	buf.WriteString(`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">`)
+	buf.WriteString(`<w:body>`)
+	for _, paragraph := range paragraphs {
+		buf.WriteString(renderDocxParagraph(paragraph))
+	}
+	buf.WriteString(`<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>`)
+	buf.WriteString(`</w:body></w:document>`)
+	return buf.String()
+}
+
+func renderDocxParagraph(p docxParagraph) string {
+	if strings.TrimSpace(p.Text) == "" {
+		return `<w:p/>`
+	}
+	size := p.Size
+	if size <= 0 {
+		size = 21
+	}
+	spacing := p.Spacing
+	if spacing <= 0 {
+		spacing = 80
+	}
+	var buf strings.Builder
+	buf.WriteString(`<w:p>`)
+	buf.WriteString(`<w:pPr>`)
+	if p.Center {
+		buf.WriteString(`<w:jc w:val="center"/>`)
+	}
+	buf.WriteString(fmt.Sprintf(`<w:spacing w:after="%d"/>`, spacing))
+	buf.WriteString(`</w:pPr>`)
+	buf.WriteString(`<w:r><w:rPr>`)
+	buf.WriteString(`<w:rFonts w:ascii="Microsoft YaHei" w:eastAsia="Microsoft YaHei" w:hAnsi="Microsoft YaHei"/>`)
+	if p.Bold {
+		buf.WriteString(`<w:b/>`)
+	}
+	buf.WriteString(fmt.Sprintf(`<w:sz w:val="%d"/>`, size))
+	buf.WriteString(`</w:rPr>`)
+	buf.WriteString(`<w:t xml:space="preserve">`)
+	buf.WriteString(html.EscapeString(strings.TrimSpace(p.Text)))
+	buf.WriteString(`</w:t></w:r></w:p>`)
+	return buf.String()
+}
+
+func markdownTextToDocxParagraphs(text string) []docxParagraph {
+	lines := strings.Split(text, "\n")
+	paragraphs := make([]docxParagraph, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == "":
+			paragraphs = append(paragraphs, docxParagraph{})
+		case strings.HasPrefix(trimmed, "### "):
+			paragraphs = append(paragraphs, docxParagraph{Text: strings.TrimSpace(strings.TrimPrefix(trimmed, "### ")), Bold: true, Size: 22, Spacing: 100})
+		case strings.HasPrefix(trimmed, "## "):
+			paragraphs = append(paragraphs, docxParagraph{Text: strings.TrimSpace(strings.TrimPrefix(trimmed, "## ")), Bold: true, Size: 24, Spacing: 120})
+		case strings.HasPrefix(trimmed, "# "):
+			paragraphs = append(paragraphs, docxParagraph{Text: strings.TrimSpace(strings.TrimPrefix(trimmed, "# ")), Bold: true, Size: 26, Spacing: 140})
+		case strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* "):
+			paragraphs = append(paragraphs, docxParagraph{Text: "• " + strings.TrimSpace(trimmed[2:]), Size: 21, Spacing: 60})
+		default:
+			paragraphs = append(paragraphs, docxParagraph{Text: strings.Trim(trimmed, "*_"), Size: 21, Spacing: 80})
+		}
+	}
+	return paragraphs
+}
+
+func splitReportTextItems(text string) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	items := make([]string, 0)
+	for _, part := range strings.FieldsFunc(text, func(r rune) bool {
+		return r == '\n' || r == ';' || r == '；'
+	}) {
+		item := strings.TrimSpace(strings.Trim(part, "-* "))
+		if item != "" {
+			items = append(items, item)
+		}
+	}
+	if len(items) == 0 {
+		return []string{text}
+	}
+	return items
+}
+
+func sanitizeReportFileNamePart(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = "未知球员"
+	}
+	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "*", "_", "?", "_", `"`, "_", "<", "_", ">", "_", "|", "_")
+	value = replacer.Replace(value)
+	value = strings.Join(strings.Fields(value), " ")
+	if value == "" {
+		return "未知球员"
+	}
+	return value
+}
+
+func firstNonEmptyReportText(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func userName(user *models.User) string {
+	if user == nil {
+		return ""
+	}
+	return user.Name
+}
+
+func userPosition(user *models.User) string {
+	if user == nil {
+		return ""
+	}
+	return user.Position
+}
+
+func userFoot(user *models.User) string {
+	if user == nil {
+		return ""
+	}
+	return firstNonEmptyReportText(user.Foot, user.DominantFoot)
+}
+
+func userClub(user *models.User) string {
+	if user == nil {
+		return ""
+	}
+	return firstNonEmptyReportText(user.CurrentTeam, user.Club, user.School)
+}
+
+const docxContentTypesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`
+
+const docxRelsXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`
+
 // buildVideoAnalysisReport 构建视频分析评分报告内容
 func (g *ReportGenerator) buildVideoAnalysisReport(analysis *models.VideoAnalysis, analystName string) string {
 	var buf bytes.Buffer
@@ -465,30 +1075,30 @@ func (g *ReportGenerator) buildVideoAnalysisReport(analysis *models.VideoAnalysi
 
 	// 评分标签映射（snake_case key -> 中文标签）
 	overallLabels := map[string]string{
-		"ball_control":      "控球能力",
-		"off_ball_movement": "无球跑动",
+		"ball_control":       "控球能力",
+		"off_ball_movement":  "无球跑动",
 		"pressing_awareness": "逼抢意识",
 		"positioning":        "站位选择",
 	}
 	offenseLabels := map[string]string{
-		"width_participation":  "拉开宽度参与",
+		"width_participation": "拉开宽度参与",
 		"off_ball_support":    "无球支援",
 		"one_v_one":           "1v1过人能力",
-		"crossing_assist":      "传中/助攻",
-		"combat_ability":       "对抗能力",
+		"crossing_assist":     "传中/助攻",
+		"combat_ability":      "对抗能力",
 		"pace_rhythm":         "节奏把控",
 		"pass_vision":         "传球视野",
 		"body_posture":        "身体姿态",
 	}
 	defenseLabels := map[string]string{
-		"defensive_commitment":    "防守投入度",
-		"loss_recovery":           "丢球回追",
-		"teammate_coordination":    "队友协防配合",
-		"second_ball":             "二点球争抢",
-		"aerial_duel":            "空中争顶",
-		"defensive_shape":        "防守阵型保持",
-		"role_adjustment":          "角色调整能力",
-		"defensive_rhythm":        "防守节奏",
+		"defensive_commitment":  "防守投入度",
+		"loss_recovery":         "丢球回追",
+		"teammate_coordination": "队友协防配合",
+		"second_ball":           "二点球争抢",
+		"aerial_duel":           "空中争顶",
+		"defensive_shape":       "防守阵型保持",
+		"role_adjustment":       "角色调整能力",
+		"defensive_rhythm":      "防守节奏",
 	}
 
 	buf.WriteString("# 球员视频分析评分报告\n\n")

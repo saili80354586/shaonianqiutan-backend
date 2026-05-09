@@ -303,6 +303,18 @@ func userHasActiveRole(user *models.User, role models.UserRole) (bool, error) {
 
 	db := config.GetDB()
 	var count int64
+	if err := db.Model(&models.UserRoleRecord{}).
+		Where("user_id = ? AND role = ? AND status IN ?", user.ID, role, []string{"active", "approved"}).
+		Count(&count).Error; err != nil {
+		if !models.IsMissingUserRolesTableError(err) {
+			return false, err
+		}
+	}
+	if count > 0 {
+		return true, nil
+	}
+
+	count = 0
 	switch role {
 	case models.RoleScout:
 		if err := db.Model(&models.Scout{}).Where("user_id = ?", user.ID).Count(&count).Error; err != nil {

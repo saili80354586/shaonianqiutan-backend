@@ -113,7 +113,7 @@ func (r *OrderRepository) Create(order *Order) error {
 // FindByID 根据ID查找订单
 func (r *OrderRepository) FindByID(id uint) (*Order, error) {
 	var order Order
-	if err := r.db.Preload("User").Preload("Analyst").First(&order, id).Error; err != nil {
+	if err := r.db.Preload("User").Preload("Analyst").Preload("Report").First(&order, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}
@@ -163,7 +163,7 @@ func (r *OrderRepository) FindByAnalystID(analystID uint, page, pageSize int) ([
 	query.Count(&total)
 
 	offset := (page - 1) * pageSize
-	err := query.Preload("User").Offset(offset).Limit(pageSize).Find(&orders).Error
+	err := query.Preload("User").Preload("Report").Offset(offset).Limit(pageSize).Find(&orders).Error
 	return orders, total, err
 }
 
@@ -326,6 +326,7 @@ func (r *OrderRepository) FindActiveByAnalystID(analystID uint) ([]Order, error)
 	err := r.db.Where("analyst_id = ? AND status = ?", analystID, OrderStatusProcessing).
 		Order("deadline ASC").
 		Preload("User").
+		Preload("Report").
 		Find(&orders).Error
 	return orders, err
 }
@@ -355,7 +356,7 @@ func (r *OrderRepository) FindHistoryByAnalystID(analystID uint, status string, 
 	query.Count(&total)
 
 	offset := (page - 1) * pageSize
-	err := query.Order("updated_at DESC").Preload("Report").Offset(offset).Limit(pageSize).Find(&orders).Error
+	err := query.Order("updated_at DESC").Preload("User").Preload("Report").Offset(offset).Limit(pageSize).Find(&orders).Error
 	return orders, total, err
 }
 

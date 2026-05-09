@@ -2,11 +2,13 @@ package services
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,18 +22,34 @@ import (
 
 // AuthService 认证服务
 type AuthService struct {
-	userRepo   *models.UserRepository
-	smsService *SmsService
-	db         *gorm.DB
+	userRepo          *models.UserRepository
+	analystRepo       *models.AnalystRepository
+	orderRepo         *models.OrderRepository
+	assignmentRepo    *models.OrderAssignmentRepository
+	statusHistoryRepo *models.OrderStatusHistoryRepository
+	smsService        *SmsService
+	db                *gorm.DB
 }
 
 var ErrAccountNotActive = errors.New("账号未激活或已被禁用")
 
-func NewAuthService(userRepo *models.UserRepository, smsService *SmsService, db *gorm.DB) *AuthService {
+func NewAuthService(
+	userRepo *models.UserRepository,
+	analystRepo *models.AnalystRepository,
+	orderRepo *models.OrderRepository,
+	assignmentRepo *models.OrderAssignmentRepository,
+	statusHistoryRepo *models.OrderStatusHistoryRepository,
+	smsService *SmsService,
+	db *gorm.DB,
+) *AuthService {
 	return &AuthService{
-		userRepo:   userRepo,
-		smsService: smsService,
-		db:         db,
+		userRepo:          userRepo,
+		analystRepo:       analystRepo,
+		orderRepo:         orderRepo,
+		assignmentRepo:    assignmentRepo,
+		statusHistoryRepo: statusHistoryRepo,
+		smsService:        smsService,
+		db:                db,
 	}
 }
 
@@ -51,6 +69,16 @@ func (s *AuthService) getActiveUserRoles(user *models.User) ([]models.UserRole, 
 	}
 
 	addRole(user.Role)
+
+	var records []models.UserRoleRecord
+	if err := s.db.Where("user_id = ? AND status IN ?", user.ID, []string{"active", "approved"}).Find(&records).Error; err != nil {
+		if !models.IsMissingUserRolesTableError(err) {
+			return nil, err
+		}
+	}
+	for _, record := range records {
+		addRole(record.Role)
+	}
 
 	var count int64
 	if err := s.db.Model(&models.Analyst{}).Where("user_id = ? AND status = ?", user.ID, models.AnalystStatusActive).Count(&count).Error; err != nil {
@@ -203,6 +231,8 @@ type RegisterRequest struct {
 	HasCase      bool   `json:"has_case"`
 	CaseDetail   string `json:"case_detail"`
 	Certificates string `json:"certificates"`
+	ContactPhone string `json:"contact_phone"`
+	ContactEmail string `json:"contact_email"`
 	// 球探专属字段
 	ScoutingExperience  string `json:"scouting_experience"`
 	ScoutingSpecialty   string `json:"scouting_specialty"`
@@ -318,7 +348,9 @@ func (s *AuthService) Register(req *RegisterRequest) (*LoginResponse, error) {
 		userRole = models.RoleUser // 球员直接激活
 	case "analyst":
 		userRole = models.RoleAnalyst
-		userStatus = models.StatusPending // 需要审核
+		if !config.IsAnalystRegistrationAutoApproved() {
+			userStatus = models.StatusPending
+		}
 	case "club":
 		userRole = models.RoleClub
 		userStatus = models.StatusPending // 需要审核
@@ -423,31 +455,61 @@ func (s *AuthService) Register(req *RegisterRequest) (*LoginResponse, error) {
 		FatherOccupation: req.FatherOccupation,
 		MotherOccupation: req.MotherOccupation,
 	}
-	err = s.userRepo.Create(user)
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+
+		if req.Role == "analyst" {
+			if err := s.createAnalystProfileForRegisteredUser(tx, user, req); err != nil {
+				return err
+			}
+		}
+
+		if req.Role == "club" && req.ClubName != "" {
+			club := &models.Club{
+				UserID:          user.ID,
+				Name:            req.ClubName,
+				Address:         req.ClubAddress,
+				ContactName:     req.ContactName,
+				ContactPhone:    req.ClubContactPhone,
+				EstablishedYear: req.FoundedYear,
+				ClubSize:        req.ClubScale,
+			}
+			if err := tx.Create(club).Error; err != nil {
+				return err
+			}
+		}
+
+		roleRecordStatus := "active"
+		if user.Status != models.StatusActive {
+			roleRecordStatus = "pending"
+		}
+		if err := models.UpsertUserRoleRecord(tx, models.UserRoleRecord{
+			UserID:        user.ID,
+			Role:          user.Role,
+			Status:        roleRecordStatus,
+			Source:        "register",
+			PublicVisible: true,
+			ApprovedAt:    timePtrIfActive(user.Status),
+		}); err != nil && !models.IsMissingUserRolesTableError(err) {
+			return err
+		}
+
+		if req.InviteCode != "" {
+			_ = s.processInviteOnRegister(tx, user, req.InviteCode)
+		}
+
+		if req.Role == "analyst" && config.IsAnalystDefaultDemoOrderEnabled() {
+			if err := s.ensureAnalystDefaultDemoOrder(tx, user.ID); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	// 根据角色创建对应的关联记录
-	if req.Role == "club" && req.ClubName != "" {
-		// 创建俱乐部记录
-		club := &models.Club{
-			UserID:          user.ID,
-			Name:            req.ClubName,
-			Address:         req.ClubAddress,
-			ContactName:     req.ContactName,
-			ContactPhone:    req.ClubContactPhone,
-			EstablishedYear: req.FoundedYear,
-			ClubSize:        req.ClubScale,
-		}
-		if err := s.db.Create(club).Error; err != nil {
-			return nil, err
-		}
-	}
-
-	// 如果提供了邀请码，自动处理邀请入队
-	if req.InviteCode != "" {
-		_ = s.processInviteOnRegister(user, req.InviteCode)
 	}
 
 	// 标记验证码为已使用
@@ -475,33 +537,230 @@ func (s *AuthService) Register(req *RegisterRequest) (*LoginResponse, error) {
 	}, nil
 }
 
+func (s *AuthService) createAnalystProfileForRegisteredUser(db *gorm.DB, user *models.User, req *RegisterRequest) error {
+	var existingCount int64
+	if err := db.Model(&models.Analyst{}).Where("user_id = ?", user.ID).Count(&existingCount).Error; err != nil {
+		return err
+	}
+	if existingCount > 0 {
+		return nil
+	}
+
+	status := models.AnalystStatusActive
+	if !config.IsAnalystRegistrationAutoApproved() {
+		status = models.AnalystStatusInactive
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = strings.TrimSpace(req.Nickname)
+	}
+	if name == "" {
+		name = "新分析师"
+	}
+
+	specialty := ""
+	if req.Profession != "" {
+		if encoded, err := json.Marshal([]string{req.Profession}); err == nil {
+			specialty = string(encoded)
+		}
+	}
+
+	analyst := &models.Analyst{
+		UserID:       user.ID,
+		Name:         name,
+		Bio:          req.Experience,
+		Specialty:    specialty,
+		Experience:   firstInt(req.Experience),
+		Profession:   req.Profession,
+		IsProPlayer:  req.IsProPlayer,
+		HasCase:      req.HasCase,
+		CaseDetail:   req.CaseDetail,
+		ContactPhone: firstNonEmpty(req.ContactPhone, req.ClubContactPhone),
+		ContactEmail: req.ContactEmail,
+		Status:       status,
+		Rating:       0,
+		ReviewCount:  0,
+	}
+
+	if err := db.Create(analyst).Error; err != nil {
+		return fmt.Errorf("创建分析师资料失败: %w", err)
+	}
+	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstInt(value string) int {
+	matches := regexp.MustCompile(`\d+`).FindString(value)
+	if matches == "" {
+		return 0
+	}
+	parsed, err := strconv.Atoi(matches)
+	if err != nil {
+		return 0
+	}
+	return parsed
+}
+
+func timePtrIfActive(status models.UserStatus) *time.Time {
+	if status != models.StatusActive {
+		return nil
+	}
+	now := time.Now()
+	return &now
+}
+
+func (s *AuthService) ensureAnalystDefaultDemoOrder(tx *gorm.DB, userID uint) error {
+	if s.analystRepo == nil || s.orderRepo == nil {
+		return nil
+	}
+
+	templateOrderID, err := config.GetAnalystDefaultDemoOrderTemplateOrderID()
+	if err != nil || templateOrderID == 0 {
+		return fmt.Errorf("默认样例订单模板配置无效")
+	}
+
+	var analyst models.Analyst
+	if err := tx.Where("user_id = ?", userID).First(&analyst).Error; err != nil {
+		return fmt.Errorf("查询分析师资料失败: %w", err)
+	}
+	if analyst.Status != models.AnalystStatusActive {
+		return nil
+	}
+
+	var templateOrder models.Order
+	if err := tx.First(&templateOrder, templateOrderID).Error; err != nil {
+		return fmt.Errorf("查询默认样例订单模板失败: %w", err)
+	}
+	if templateOrder.Status != models.OrderStatusUploaded && templateOrder.Status != models.OrderStatusAssigned &&
+		templateOrder.Status != models.OrderStatusProcessing && templateOrder.Status != models.OrderStatusCompleted {
+		return fmt.Errorf("默认样例订单模板状态不合法: %s", templateOrder.Status)
+	}
+	if strings.TrimSpace(templateOrder.VideoURL) == "" {
+		return fmt.Errorf("默认样例订单模板缺少视频地址")
+	}
+
+	remarkPrefix := fmt.Sprintf("[系统样例订单 template=%d analyst=%d]", templateOrder.ID, analyst.ID)
+	var existingCount int64
+	if err := tx.Model(&models.Order{}).
+		Where("analyst_id = ? AND remark LIKE ?", analyst.ID, remarkPrefix+"%").
+		Count(&existingCount).Error; err != nil {
+		return fmt.Errorf("检查默认样例订单失败: %w", err)
+	}
+	if existingCount > 0 {
+		return nil
+	}
+
+	assignedAt := time.Now()
+	deadlineHours := 48
+	if templateOrder.OrderType == "pro" {
+		deadlineHours = 72
+	}
+	deadline := assignedAt.Add(time.Duration(deadlineHours) * time.Hour)
+	orderNo := fmt.Sprintf("DEMO%dA%d%04d", assignedAt.UnixNano(), analyst.ID, templateOrder.ID%10000)
+	remark := remarkPrefix
+	if trimmed := strings.TrimSpace(templateOrder.Remark); trimmed != "" {
+		remark = remark + " " + trimmed
+	}
+
+	playerAge := templateOrder.PlayerAge
+	if playerAge <= 0 && templateOrder.UserID > 0 {
+		var templatePlayer models.User
+		if err := tx.Select("id", "birth_date").First(&templatePlayer, templateOrder.UserID).Error; err == nil {
+			playerAge = calculateAgeFromBirthDate(templatePlayer.BirthDate)
+		}
+	}
+
+	clonedOrder := &models.Order{
+		UserID:         templateOrder.UserID,
+		AnalystID:      &analyst.ID,
+		OrderNo:        orderNo,
+		Amount:         templateOrder.Amount,
+		Status:         models.OrderStatusAssigned,
+		PaymentMethod:  templateOrder.PaymentMethod,
+		VideoURL:       templateOrder.VideoURL,
+		VideoFilename:  templateOrder.VideoFilename,
+		PaidAt:         &assignedAt,
+		Remark:         remark,
+		OrderType:      templateOrder.OrderType,
+		PlayerName:     templateOrder.PlayerName,
+		PlayerAge:      playerAge,
+		PlayerPosition: templateOrder.PlayerPosition,
+		JerseyColor:    templateOrder.JerseyColor,
+		JerseyNumber:   templateOrder.JerseyNumber,
+		MatchName:      templateOrder.MatchName,
+		Opponent:       templateOrder.Opponent,
+		VideoDuration:  templateOrder.VideoDuration,
+		Deadline:       &deadline,
+		AssignedAt:     &assignedAt,
+	}
+	if err := tx.Create(clonedOrder).Error; err != nil {
+		return fmt.Errorf("创建默认样例订单失败: %w", err)
+	}
+
+	if s.assignmentRepo != nil {
+		assignment := &models.OrderAssignment{
+			OrderID:    clonedOrder.ID,
+			AnalystID:  analyst.ID,
+			AssignedAt: assignedAt,
+			Status:     models.OrderAssignmentStatusPending,
+		}
+		if err := s.assignmentRepo.CreateWithTx(tx, assignment); err != nil {
+			return fmt.Errorf("创建默认样例派单记录失败: %w", err)
+		}
+	}
+
+	if s.statusHistoryRepo != nil {
+		history := &models.OrderStatusHistory{
+			OrderID:    clonedOrder.ID,
+			FromStatus: models.OrderStatusUploaded,
+			ToStatus:   models.OrderStatusAssigned,
+			ActorRole:  "system",
+			Reason:     "分析师注册默认样例订单",
+		}
+		if err := s.statusHistoryRepo.CreateWithTx(tx, history); err != nil {
+			return fmt.Errorf("写入默认样例订单状态记录失败: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // processInviteOnRegister 注册时自动处理邀请码入队/入俱乐部
-func (s *AuthService) processInviteOnRegister(user *models.User, inviteCode string) error {
+func (s *AuthService) processInviteOnRegister(tx *gorm.DB, user *models.User, inviteCode string) error {
 	// 先尝试查找球队邀请
 	var teamInv models.TeamInvitation
-	teamErr := s.db.Where("invite_code = ?", inviteCode).First(&teamInv).Error
+	teamErr := tx.Where("invite_code = ?", inviteCode).First(&teamInv).Error
 	if teamErr == nil {
-		return s.processTeamInviteOnRegister(user, &teamInv)
+		return s.processTeamInviteOnRegister(tx, user, &teamInv)
 	}
 
 	// 再尝试查找俱乐部邀请
 	var clubInv models.ClubInvitation
-	clubErr := s.db.Where("invite_code = ?", inviteCode).First(&clubInv).Error
+	clubErr := tx.Where("invite_code = ?", inviteCode).First(&clubInv).Error
 	if clubErr == nil {
-		return s.processClubInviteOnRegister(user, &clubInv)
+		return s.processClubInviteOnRegister(tx, user, &clubInv)
 	}
 
 	return fmt.Errorf("邀请码无效")
 }
 
 // processTeamInviteOnRegister 处理球队邀请
-func (s *AuthService) processTeamInviteOnRegister(user *models.User, inv *models.TeamInvitation) error {
+func (s *AuthService) processTeamInviteOnRegister(tx *gorm.DB, user *models.User, inv *models.TeamInvitation) error {
 	if inv.Status != models.InvitationStatusPending {
 		return fmt.Errorf("邀请已处理")
 	}
 	if time.Now().After(inv.ExpiresAt) {
 		inv.Status = models.InvitationStatusExpired
-		_ = s.db.Save(inv).Error
+		_ = tx.Save(inv).Error
 		return fmt.Errorf("邀请已过期")
 	}
 
@@ -509,12 +768,12 @@ func (s *AuthService) processTeamInviteOnRegister(user *models.User, inv *models
 
 	if inv.Type == models.InvitationTypePlayer {
 		var existingCount int64
-		s.db.Model(&models.TeamPlayer{}).Where("team_id = ? AND user_id = ?", inv.TeamID, user.ID).Count(&existingCount)
+		tx.Model(&models.TeamPlayer{}).Where("team_id = ? AND user_id = ?", inv.TeamID, user.ID).Count(&existingCount)
 		if existingCount == 0 {
 			// 获取球队信息以填充 ClubPlayer 字段
 			var team models.Team
 			teamAgeGroup := ""
-			if err := s.db.First(&team, inv.TeamID).Error; err == nil {
+			if err := tx.First(&team, inv.TeamID).Error; err == nil {
 				teamAgeGroup = team.AgeGroup
 			}
 
@@ -524,11 +783,11 @@ func (s *AuthService) processTeamInviteOnRegister(user *models.User, inv *models
 				Status:   "active",
 				JoinedAt: now,
 			}
-			_ = s.db.Create(tp).Error
+			_ = tx.Create(tp).Error
 
 			// 同步创建 ClubPlayer（如果不存在）
 			var clubPlayerCount int64
-			s.db.Model(&models.ClubPlayer{}).Where("club_id = ? AND user_id = ?", inv.ClubID, user.ID).Count(&clubPlayerCount)
+			tx.Model(&models.ClubPlayer{}).Where("club_id = ? AND user_id = ?", inv.ClubID, user.ID).Count(&clubPlayerCount)
 			if clubPlayerCount == 0 {
 				cp := &models.ClubPlayer{
 					ClubID:   inv.ClubID,
@@ -537,12 +796,12 @@ func (s *AuthService) processTeamInviteOnRegister(user *models.User, inv *models
 					AgeGroup: teamAgeGroup,
 					Status:   "active",
 				}
-				_ = s.db.Create(cp).Error
+				_ = tx.Create(cp).Error
 			}
 		}
 	} else if inv.Type == models.InvitationTypeCoach {
 		var existingCount int64
-		s.db.Model(&models.TeamCoach{}).Where("team_id = ? AND user_id = ?", inv.TeamID, user.ID).Count(&existingCount)
+		tx.Model(&models.TeamCoach{}).Where("team_id = ? AND user_id = ?", inv.TeamID, user.ID).Count(&existingCount)
 		if existingCount == 0 {
 			tc := &models.TeamCoach{
 				TeamID:   inv.TeamID,
@@ -551,24 +810,24 @@ func (s *AuthService) processTeamInviteOnRegister(user *models.User, inv *models
 				Status:   "active",
 				JoinedAt: now,
 			}
-			_ = s.db.Create(tc).Error
+			_ = tx.Create(tc).Error
 		}
 	}
 
 	inv.Status = models.InvitationStatusAccepted
 	inv.TargetUserID = &user.ID
 	inv.AcceptedAt = &now
-	return s.db.Save(inv).Error
+	return tx.Save(inv).Error
 }
 
 // processClubInviteOnRegister 处理俱乐部邀请
-func (s *AuthService) processClubInviteOnRegister(user *models.User, inv *models.ClubInvitation) error {
+func (s *AuthService) processClubInviteOnRegister(tx *gorm.DB, user *models.User, inv *models.ClubInvitation) error {
 	if inv.Status != models.InvitationStatusPending {
 		return fmt.Errorf("邀请已处理")
 	}
 	if time.Now().After(inv.ExpiresAt) {
 		inv.Status = models.InvitationStatusExpired
-		_ = s.db.Save(inv).Error
+		_ = tx.Save(inv).Error
 		return fmt.Errorf("邀请已过期")
 	}
 
@@ -576,7 +835,7 @@ func (s *AuthService) processClubInviteOnRegister(user *models.User, inv *models
 
 	// 创建 ClubCoach 关联记录
 	var existingCount int64
-	s.db.Model(&models.ClubCoach{}).Where("club_id = ? AND user_id = ?", inv.ClubID, user.ID).Count(&existingCount)
+	tx.Model(&models.ClubCoach{}).Where("club_id = ? AND user_id = ?", inv.ClubID, user.ID).Count(&existingCount)
 	if existingCount == 0 {
 		cc := &models.ClubCoach{
 			ClubID:      inv.ClubID,
@@ -585,13 +844,13 @@ func (s *AuthService) processClubInviteOnRegister(user *models.User, inv *models
 			Status:      models.ClubCoachStatusActive,
 			JoinedAt:    now,
 		}
-		_ = s.db.Create(cc).Error
+		_ = tx.Create(cc).Error
 	}
 
 	inv.Status = models.InvitationStatusAccepted
 	inv.TargetUserID = &user.ID
 	inv.AcceptedAt = &now
-	return s.db.Save(inv).Error
+	return tx.Save(inv).Error
 }
 
 // ResetPassword 重置密码

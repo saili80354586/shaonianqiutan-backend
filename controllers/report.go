@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -175,7 +177,7 @@ func (ctrl *ReportController) getReportHighlightMarkers(report *models.Report, u
 	return markers, analysis.ID
 }
 
-// DownloadReport 下载PDF报告
+// DownloadReport 下载报告。优先正式 PDF，其次分析师上传的 Word，最后回退在线报告正文。
 func (ctrl *ReportController) DownloadReport(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
@@ -218,21 +220,67 @@ func (ctrl *ReportController) DownloadReport(c *gin.Context) {
 		return
 	}
 
-	if report.PdfURL == "" {
-		utils.Error(c, http.StatusNotFound, "PDF文件不存在")
+	if report.PdfURL != "" {
+		filePath := ctrl.reportService.GetPdfFilePath(report)
+		if _, err := os.Stat(filePath); err == nil {
+			ctrl.sendReportFile(c, filePath, ".pdf", "application/pdf", report)
+			return
+		}
+	}
+
+	if report.AIReportURL != "" {
+		filePath := filepath.Join(".", strings.TrimPrefix(report.AIReportURL, "/"))
+		if _, err := os.Stat(filePath); err == nil {
+			ext := strings.ToLower(filepath.Ext(filePath))
+			ctrl.sendReportFile(c, filePath, ext, reportAttachmentContentType(ext), report)
+			return
+		}
+	}
+
+	if strings.TrimSpace(report.Content) != "" {
+		fileName := reportDownloadBaseName(report) + ".md"
+		c.Header("Content-Type", "text/markdown; charset=utf-8")
+		c.Header("Content-Disposition", "attachment; filename*=UTF-8''"+urlEncode(fileName))
+		c.String(http.StatusOK, report.Content)
 		return
 	}
 
-	filePath := ctrl.reportService.GetPdfFilePath(report)
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		utils.Error(c, http.StatusNotFound, "PDF文件不存在")
-		return
-	}
+	utils.Error(c, http.StatusNotFound, "报告文件不存在")
+}
 
-	fileName := report.PlayerName + "_球探报告.pdf"
-	c.Header("Content-Type", "application/pdf")
-	c.Header("Content-Disposition", "attachment; filename=\""+urlEncode(fileName)+"\"")
+func (ctrl *ReportController) sendReportFile(c *gin.Context, filePath, ext, contentType string, report *models.Report) {
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if ext == "" {
+		ext = filepath.Ext(filePath)
+	}
+	fileName := reportDownloadBaseName(report) + ext
+	c.Header("Content-Type", contentType)
+	c.Header("Content-Disposition", "attachment; filename*=UTF-8''"+urlEncode(fileName))
 	c.File(filePath)
+}
+
+func reportDownloadBaseName(report *models.Report) string {
+	if report == nil || strings.TrimSpace(report.PlayerName) == "" {
+		return "球探报告"
+	}
+	return strings.TrimSpace(report.PlayerName) + "_球探报告"
+}
+
+func reportAttachmentContentType(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".pdf":
+		return "application/pdf"
+	case ".doc":
+		return "application/msword"
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".md":
+		return "text/markdown; charset=utf-8"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 // GetMyReports 获取我的报告列表（作为买家）

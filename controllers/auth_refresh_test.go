@@ -47,7 +47,7 @@ func setupAuthRefreshTestRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	authService := services.NewAuthService(models.NewUserRepository(db), nil, db)
+	authService := services.NewAuthService(models.NewUserRepository(db), nil, nil, nil, nil, nil, db)
 	authController := controllers.NewAuthController(authService, nil)
 
 	router := gin.New()

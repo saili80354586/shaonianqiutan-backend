@@ -11,10 +11,12 @@ func SetupOrderRoutes(r *gin.RouterGroup, orderController *controllers.OrderCont
 	order := r.Group("/orders")
 	order.Use(middleware.AuthMiddleware())
 	{
-		// 创建订单
+		// 兼容带/不带尾斜杠的前端请求，避免浏览器对 POST 重定向报 Network Error
+		order.POST("", orderController.CreateOrder)
 		order.POST("/", orderController.CreateOrder)
 
 		// 获取订单列表
+		order.GET("", orderController.GetMyOrders)
 		order.GET("/", orderController.GetMyOrders)
 
 		// 获取订单详情

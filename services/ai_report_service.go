@@ -28,6 +28,21 @@ var DefaultAIConfig = AIConfig{
 	Model:   "glm-4-flash",
 }
 
+// ProfessionalScoutReportSystemPrompt is the fixed system prompt for youth scouting reports.
+const ProfessionalScoutReportSystemPrompt = `你是“少年球探”平台的青少年足球球探报告专家，具备长期青训观察、比赛视频分析和球员发展规划经验。
+你的任务是基于用户提供的结构化数据生成专业、客观、可执行的青少年足球视频分析球探报告。
+
+写作原则：
+1. 只依据已提供的球员档案、比赛信息、分析师评分、分析师文字评价和关键片段作判断，不编造未提供的事实。
+2. 分析师的评分和文字判断优先级最高，AI 只能进行结构化表达、扩写、归纳和建议，不得推翻分析师结论。
+3. 报告面向青训球员、家长、教练和俱乐部，语言专业但易懂，语气客观、鼓励、不过度承诺。
+4. 每个重要结论都要能对应到评分、评语、关键片段或球员档案；证据不足时必须说明“数据有限”。
+5. 不做医学诊断，不承诺职业化结果，不输出联系方式、家庭隐私或与足球评估无关的信息。
+6. 输出使用 Markdown，多级标题清晰，不要输出 JSON、代码块或解释提示词本身。`
+
+// VideoAnalysisReportTemplateVersion 标记视频分析报告模板版本，便于输入快照追踪。
+const VideoAnalysisReportTemplateVersion = "video-analysis-report-v1.1-2026-04-30"
+
 // ========== OpenAI兼容请求/响应结构 ==========
 
 // ChatRequest 聊天补全请求（OpenAI兼容格式）
@@ -98,13 +113,8 @@ func NewAIService(config AIConfig) *AIService {
 
 // GenerateReport 生成视频分析报告
 func (s *AIService) GenerateReport(prompt string) (string, error) {
-	systemPrompt := `你是一位拥有15年青训经验的专业足球球探，曾发掘过多名职业球员，为多家俱乐部提供球探报告。
-你的分析报告以专业、客观、鼓励为基调，既要指出不足，更要肯定优点。
-报告语言要专业但易懂，适合家长和教练阅读。
-字数要求：约5000字，结构完整，分析深入。`
-
 	messages := []ChatMessage{
-		{Role: "system", Content: systemPrompt},
+		{Role: "system", Content: ProfessionalScoutReportSystemPrompt},
 		{Role: "user", Content: prompt},
 	}
 
@@ -182,12 +192,25 @@ func (s *AIService) chat(messages []ChatMessage) (string, error) {
 func BuildReportPrompt(analysis *VideoAnalysisReportInput) string {
 	var sb strings.Builder
 
-	sb.WriteString("请根据以下球员信息和分析师评分，生成一份专业的视频分析报告：\n\n")
+	if analysis == nil {
+		return ""
+	}
+
+	sb.WriteString("【任务】\n")
+	sb.WriteString("请基于以下结构化输入，生成一份“少年球探青少年足球视频分析球探报告”。报告应贴合青训球员评估场景，覆盖技术特点、比赛表现、优缺点、潜力判断和发展建议。\n\n")
+
+	sb.WriteString("【数据使用优先级】\n")
+	sb.WriteString("1. 分析师评分、单项评语、综合评价、优势、待加强点、改进建议为最高优先级依据。\n")
+	sb.WriteString("2. 关键片段是报告结论的重要证据：精彩表现写入优势与关键片段分析；待改进问题写入问题诊断和训练建议；战术观察用于补充比赛理解。\n")
+	sb.WriteString("3. 球员档案仅作为背景信息，不得用未提供的数据推断身体、心理或职业前景。\n")
+	sb.WriteString("4. 若某项数据缺失，请写“暂无记录”或在数据边界中说明，不要编造。\n\n")
 
 	// 球员基本信息
 	sb.WriteString("【球员基本信息】\n")
-	sb.WriteString(fmt.Sprintf("- 姓名：%s\n", analysis.PlayerName))
-	sb.WriteString(fmt.Sprintf("- 年龄：%d岁\n", analysis.PlayerAge))
+	writePromptField(&sb, "姓名", analysis.PlayerName)
+	if analysis.PlayerAge > 0 {
+		sb.WriteString(fmt.Sprintf("- 年龄：%d岁\n", analysis.PlayerAge))
+	}
 	if analysis.PlayerPosition != "" {
 		sb.WriteString(fmt.Sprintf("- 位置：%s\n", analysis.PlayerPosition))
 	}
@@ -202,6 +225,15 @@ func BuildReportPrompt(analysis *VideoAnalysisReportInput) string {
 	}
 	if analysis.PlayerTeam != "" {
 		sb.WriteString(fmt.Sprintf("- 所属球队：%s\n", analysis.PlayerTeam))
+	}
+	for _, fact := range analysis.PlayerProfileFacts {
+		writePromptField(&sb, fact.Label, fact.Value)
+	}
+	if len(analysis.PhysicalTestFacts) > 0 {
+		sb.WriteString("\n【体测与身体素质数据】\n")
+		for _, fact := range analysis.PhysicalTestFacts {
+			writePromptField(&sb, fact.Label, fact.Value)
+		}
 	}
 	sb.WriteString("\n")
 
@@ -236,7 +268,9 @@ func BuildReportPrompt(analysis *VideoAnalysisReportInput) string {
 	// 综合评分
 	sb.WriteString("【分析师评分】\n")
 	sb.WriteString(fmt.Sprintf("- 综合评分：%.1f分\n", analysis.OverallScore))
-	sb.WriteString(fmt.Sprintf("- 潜力等级：%s级\n", analysis.PotentialLevel))
+	if analysis.PotentialLevel != "" {
+		sb.WriteString(fmt.Sprintf("- 潜力等级：%s级\n", analysis.PotentialLevel))
+	}
 	sb.WriteString("\n")
 
 	// 各项评分 - 20维度
@@ -281,6 +315,16 @@ func BuildReportPrompt(analysis *VideoAnalysisReportInput) string {
 	}
 	sb.WriteString("\n")
 
+	if analysis.Strengths != "" {
+		sb.WriteString("【分析师记录的核心优势】\n")
+		sb.WriteString(normalizePromptText(analysis.Strengths) + "\n\n")
+	}
+
+	if analysis.Weaknesses != "" {
+		sb.WriteString("【分析师记录的待加强点】\n")
+		sb.WriteString(normalizePromptText(analysis.Weaknesses) + "\n\n")
+	}
+
 	// 高光时刻
 	if len(analysis.Highlights) > 0 {
 		sb.WriteString("【关键片段标记】\n")
@@ -313,17 +357,80 @@ func BuildReportPrompt(analysis *VideoAnalysisReportInput) string {
 	}
 
 	// 报告要求
-	sb.WriteString("【报告要求】\n")
-	sb.WriteString("1. 总字数约5000字\n")
-	sb.WriteString("2. 语言专业但易懂，适合家长阅读\n")
-	sb.WriteString("3. 每个评分维度要有深度分析，不只是复述分数\n")
-	sb.WriteString("4. 结合具体场景举例说明\n")
-	sb.WriteString("5. 成长建议要具体可执行\n")
-	sb.WriteString("6. 全文语气积极正面，以鼓励为主\n")
-	sb.WriteString("7. 结构清晰，使用多级标题\n\n")
-	sb.WriteString("请开始生成报告：\n")
+	sb.WriteString("【固定输出结构】\n")
+	sb.WriteString("请严格按以下 Markdown 章节输出，章节标题不得缺失：\n")
+	sb.WriteString("# 青少年足球视频分析球探报告\n")
+	sb.WriteString("## 1. 报告摘要\n")
+	sb.WriteString("用 3-5 段概括球员当前画像、主要优势、主要问题、综合评分含义和后续发展方向。\n")
+	sb.WriteString("## 2. 球员基础画像\n")
+	sb.WriteString("结合年龄、位置、身体数据、踢球风格、球队/学校等信息说明评估背景；缺失信息不要编造。\n")
+	sb.WriteString("## 3. 本场比赛背景\n")
+	sb.WriteString("说明比赛、对手、出场时间、进球助攻等背景，并解释这些背景对评价的影响。\n")
+	sb.WriteString("## 4. 综合评分与潜力解读\n")
+	sb.WriteString("解释综合评分和潜力等级，指出该分数在青训评估中的含义和限制。\n")
+	sb.WriteString("## 5. 技术能力分析\n")
+	sb.WriteString("围绕控球、传球视野、1v1、传中/助攻、节奏和身体姿态做专业分析。\n")
+	sb.WriteString("## 6. 战术与无球表现\n")
+	sb.WriteString("围绕无球跑动、站位选位、无球支援、角色调整和比赛阅读进行分析。\n")
+	sb.WriteString("## 7. 进攻表现\n")
+	sb.WriteString("解释进攻维度高低分的原因，并结合关键片段或评语说明。\n")
+	sb.WriteString("## 8. 防守表现\n")
+	sb.WriteString("解释防守投入、回追、协防、阵型保持、二点球和空中争顶表现。\n")
+	sb.WriteString("## 9. 身体与心理特点\n")
+	sb.WriteString("只基于已提供身体数据、对抗表现、心智标签和比赛行为分析，不做医学判断。\n")
+	sb.WriteString("## 10. 关键片段分析\n")
+	sb.WriteString("按时间点/时间段引用关键片段，分别说明精彩表现、待改进问题和战术观察。\n")
+	sb.WriteString("## 11. 核心优势\n")
+	sb.WriteString("列出 3-5 条优势，每条包含证据和对未来比赛的价值。\n")
+	sb.WriteString("## 12. 待提升问题\n")
+	sb.WriteString("列出 3-5 条问题，每条说明表现、原因和可能影响，避免否定式评价。\n")
+	sb.WriteString("## 13. 4 周训练建议\n")
+	sb.WriteString("给出具体、可执行、可追踪的训练计划，至少包含技术、战术、身体或心理中的三类。\n")
+	sb.WriteString("## 14. 给家长和教练的建议\n")
+	sb.WriteString("分别给家长和教练写建议，强调长期成长、比赛复盘和训练反馈方式。\n")
+	sb.WriteString("## 15. 数据边界说明\n")
+	sb.WriteString("说明本报告基于单场/当前视频、分析师评分和已有档案生成，缺失数据不作为判断依据。\n\n")
+	sb.WriteString("【写作约束】\n")
+	sb.WriteString("1. 总字数建议 3000-5000 字；如果输入信息较少，优先保证结构完整和建议可执行。\n")
+	sb.WriteString("2. 不要逐项机械复述 20 个分数；应归纳为技术、战术、进攻、防守、身体心理几个维度。\n")
+	sb.WriteString("3. 低分项必须给出具体训练方法；高分项必须说明可迁移到比赛中的价值。\n")
+	sb.WriteString("4. 不使用“必进职业队”“天才确定无疑”等绝对化表达。\n")
+	sb.WriteString("5. 不要输出手机号、微信、家庭联系方式等隐私信息。\n\n")
+	sb.WriteString("请开始生成正式报告正文：\n")
 
 	return sb.String()
+}
+
+func writePromptField(sb *strings.Builder, label string, value string) {
+	label = strings.TrimSpace(label)
+	value = normalizePromptText(value)
+	if label == "" || value == "" {
+		return
+	}
+	sb.WriteString(fmt.Sprintf("- %s：%s\n", label, value))
+}
+
+func normalizePromptText(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+
+	var stringItems []string
+	if err := json.Unmarshal([]byte(trimmed), &stringItems); err == nil && len(stringItems) > 0 {
+		cleanItems := make([]string, 0, len(stringItems))
+		for _, item := range stringItems {
+			item = strings.TrimSpace(item)
+			if item != "" {
+				cleanItems = append(cleanItems, item)
+			}
+		}
+		if len(cleanItems) > 0 {
+			return strings.Join(cleanItems, "、")
+		}
+	}
+
+	return trimmed
 }
 
 // VideoAnalysisReportInput 报告生成输入
@@ -335,6 +442,9 @@ type VideoAnalysisReportInput struct {
 	PlayerHeight   float64
 	PlayerWeight   float64
 	PlayerTeam     string
+	// Whitelisted profile facts from user profile. Sensitive contact/family fields must not be included.
+	PlayerProfileFacts []ReportFactInput
+	PhysicalTestFacts  []ReportFactInput
 
 	MatchName     string
 	MatchDate     string
@@ -351,8 +461,16 @@ type VideoAnalysisReportInput struct {
 
 	Highlights   []HighlightInput
 	Summary      string
+	Strengths    string
+	Weaknesses   string
 	Improvements string
 	AnalystNotes string
+}
+
+// ReportFactInput is a label-value fact included in the AI prompt.
+type ReportFactInput struct {
+	Label string
+	Value string
 }
 
 // ScoresInput 评分输入（20项对齐前端）

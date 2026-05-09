@@ -30,3 +30,73 @@ func TestGetCORSOriginsDevelopmentIncludesLocalDefaults(t *testing.T) {
 		t.Fatalf("GetCORSOrigins() = %#v, want %#v", got, want)
 	}
 }
+
+func TestGetPaymentModeDefaultsToMock(t *testing.T) {
+	t.Setenv("PAYMENT_MODE", "")
+
+	if got := GetPaymentMode(); got != PaymentModeMock {
+		t.Fatalf("GetPaymentMode() = %q, want %q", got, PaymentModeMock)
+	}
+}
+
+func TestGetPaymentModeHonorsReal(t *testing.T) {
+	t.Setenv("PAYMENT_MODE", "real")
+
+	if got := GetPaymentMode(); got != PaymentModeReal {
+		t.Fatalf("GetPaymentMode() = %q, want %q", got, PaymentModeReal)
+	}
+}
+
+func TestGetSmsModeDefaultsToMockInDevelopment(t *testing.T) {
+	t.Setenv("NODE_ENV", "development")
+	t.Setenv("SMS_MODE", "")
+
+	if got := GetSmsMode(); got != SmsModeMock {
+		t.Fatalf("GetSmsMode() = %q, want %q", got, SmsModeMock)
+	}
+}
+
+func TestGetSmsModeDefaultsToRealOutsideDevelopment(t *testing.T) {
+	t.Setenv("NODE_ENV", "production")
+	t.Setenv("SMS_MODE", "")
+
+	if got := GetSmsMode(); got != SmsModeReal {
+		t.Fatalf("GetSmsMode() = %q, want %q", got, SmsModeReal)
+	}
+}
+
+func TestGetSmsModeHonorsExplicitMockOutsideDevelopment(t *testing.T) {
+	t.Setenv("NODE_ENV", "production")
+	t.Setenv("SMS_MODE", "mock")
+
+	if got := GetSmsMode(); got != SmsModeMock {
+		t.Fatalf("GetSmsMode() = %q, want %q", got, SmsModeMock)
+	}
+}
+
+func TestIsAnalystRegistrationAutoApprovedDefaultsToTrueInDevelopment(t *testing.T) {
+	t.Setenv("NODE_ENV", "development")
+	t.Setenv("ANALYST_REGISTRATION_AUTO_APPROVE", "")
+
+	if !IsAnalystRegistrationAutoApproved() {
+		t.Fatal("IsAnalystRegistrationAutoApproved() = false, want true")
+	}
+}
+
+func TestIsAnalystRegistrationAutoApprovedDefaultsToFalseOutsideDevelopment(t *testing.T) {
+	t.Setenv("NODE_ENV", "production")
+	t.Setenv("ANALYST_REGISTRATION_AUTO_APPROVE", "")
+
+	if IsAnalystRegistrationAutoApproved() {
+		t.Fatal("IsAnalystRegistrationAutoApproved() = true, want false")
+	}
+}
+
+func TestIsAnalystRegistrationAutoApprovedHonorsExplicitTrueOutsideDevelopment(t *testing.T) {
+	t.Setenv("NODE_ENV", "production")
+	t.Setenv("ANALYST_REGISTRATION_AUTO_APPROVE", "true")
+
+	if !IsAnalystRegistrationAutoApproved() {
+		t.Fatal("IsAnalystRegistrationAutoApproved() = false, want true")
+	}
+}

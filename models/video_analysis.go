@@ -394,13 +394,17 @@ type VideoAnalysis struct {
 
 	// ========== 摘要与建议 ==========
 	Summary      string `json:"summary" gorm:"type:text"`       // 综合评价摘要
+	Strengths    string `json:"strengths" gorm:"type:text"`     // 优势表现
+	Weaknesses   string `json:"weaknesses" gorm:"type:text"`    // 待加强点
 	Improvements string `json:"improvements" gorm:"type:text"`  // 重点改进建议
 	AnalystNotes string `json:"analyst_notes" gorm:"type:text"` // 分析师补充说明
 
 	// ========== AI生成报告 ==========
-	AIReport        string `json:"ai_report" gorm:"type:longtext"`  // AI生成的完整报告
-	AIReportStatus  string `json:"ai_report_status" gorm:"size:20"` // draft/regenerating/confirmed
-	AIReportVersion int    `json:"ai_report_version"`               // 报告版本号（用于追踪修改）
+	AIReport                string `json:"ai_report" gorm:"type:longtext"`                  // AI生成的完整报告
+	AIReportStatus          string `json:"ai_report_status" gorm:"size:20"`                 // generating/draft/regenerating/confirmed/failed
+	AIReportVersion         int    `json:"ai_report_version"`                               // 报告版本号（用于追踪修改）
+	AIReportInputSnapshot   string `json:"ai_report_input_snapshot" gorm:"type:longtext"`   // 生成报告时使用的结构化输入快照
+	AIReportTemplateVersion string `json:"ai_report_template_version" gorm:"size:80;index"` // 内容模板版本
 
 	// ========== 状态与时间 ==========
 	Status    VideoAnalysisStatus `json:"status" gorm:"size:20;default:'scoring'"`

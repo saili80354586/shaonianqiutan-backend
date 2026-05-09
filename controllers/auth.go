@@ -154,9 +154,9 @@ func (ctrl *AuthController) SendCode(c *gin.Context) {
 	}
 
 	// 生成验证码
-	// 开发模式使用固定验证码，方便测试
+	// 测试短信模式使用固定验证码，方便无短信服务的测试环境注册。
 	var code string
-	if config.IsDevMode() {
+	if config.IsMockSmsMode() {
 		code = "123456"
 	} else {
 		code = ctrl.smsService.GenerateCode()
@@ -181,10 +181,10 @@ func (ctrl *AuthController) SendCode(c *gin.Context) {
 		_ = ctrl.smsService.CleanExpired()
 	}()
 
-	// 开发模式返回验证码
+	// mock 短信模式返回验证码
 	if result.DevMode {
 		c.JSON(http.StatusOK, gin.H{
-			"message": "验证码已生成（开发模式）",
+			"message": "验证码已生成（测试短信模式）",
 			"code":    result.Code,
 		})
 		return
