@@ -13,6 +13,7 @@ func SetupReportRoutes(r *gin.RouterGroup, reportController *controllers.ReportC
 	{
 		report.POST("/", reportController.CreateReport)
 		report.GET("/:id", reportController.GetReportDetail)
+		report.GET("/:id/versions", reportController.GetReportVersions)
 		report.GET("/:id/download", reportController.DownloadReport)
 		report.GET("/my", reportController.GetMyReports)
 		report.GET("/published", reportController.GetMyPublishedReports)

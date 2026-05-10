@@ -33,6 +33,7 @@ func setupOrderFlowTestDB(t *testing.T) *gorm.DB {
 		&models.User{},
 		&models.Analyst{},
 		&models.Report{},
+		&models.ReportVersion{},
 		&models.Order{},
 		&models.OrderAssignment{},
 		&models.OrderStatusHistory{},

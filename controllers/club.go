@@ -139,15 +139,21 @@ func (c *ClubController) GetClubProfile(ctx *gin.Context) {
 	c.db.Model(&models.ClubCoach{}).Where("club_id = ? AND status = ?", club.ID, models.ClubCoachStatusActive).Count(&coachCount)
 	var owner models.User
 	achievements := ""
-	if err := c.db.Select("achievements").First(&owner, club.UserID).Error; err == nil {
+	ownerAvatar := ""
+	if err := c.db.Select("achievements, avatar").First(&owner, club.UserID).Error; err == nil {
 		achievements = owner.Achievements
+		ownerAvatar = owner.Avatar
+	}
+	logo := club.Logo
+	if logo == "" {
+		logo = ownerAvatar
 	}
 
 	utils.SuccessResponse(ctx, gin.H{
 		"id":                    club.ID,
 		"userId":                club.UserID,
 		"name":                  club.Name,
-		"logo":                  club.Logo,
+		"logo":                  logo,
 		"description":           club.Description,
 		"address":               club.Address,
 		"province":              club.Province,

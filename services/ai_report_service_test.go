@@ -5,6 +5,15 @@ import (
 	"testing"
 )
 
+func TestDefaultAIConfigUsesAnheproGPT55(t *testing.T) {
+	if DefaultAIConfig.BaseURL != "https://api.anhepro.com/v1" {
+		t.Fatalf("default AI base url = %q", DefaultAIConfig.BaseURL)
+	}
+	if DefaultAIConfig.Model != "gpt-5.5" {
+		t.Fatalf("default AI model = %q", DefaultAIConfig.Model)
+	}
+}
+
 func TestBuildReportPromptIncludesProfessionalScoutTemplateAndInputs(t *testing.T) {
 	prompt := BuildReportPrompt(&VideoAnalysisReportInput{
 		PlayerName:     "林子昂",
@@ -41,6 +50,10 @@ func TestBuildReportPromptIncludesProfessionalScoutTemplateAndInputs(t *testing.
 	mustContain := []string{
 		"少年球探青少年足球视频分析球探报告",
 		"【数据使用优先级】",
+		"【重点参考信息】",
+		"总字数建议不少于 5000 字",
+		"相对同龄球员常见水平",
+		"不得虚构数据库、排名或百分位",
 		"技术标签：盘带、速度",
 		"30米冲刺：4.8秒",
 		"【分析师记录的核心优势】",

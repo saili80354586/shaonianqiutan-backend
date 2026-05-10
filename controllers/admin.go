@@ -418,6 +418,31 @@ func (ctrl *AdminController) UploadAIReport(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "更新报告URL失败")
 		return
 	}
+	db := ctrl.adminService.GetDB()
+	var analysis models.VideoAnalysis
+	if db != nil && db.Migrator().HasTable(&models.VideoAnalysis{}) {
+		_ = db.Where("order_id = ?", report.OrderID).First(&analysis).Error
+	}
+	adminID := c.GetUint("userId")
+	if err := models.CreateReportVersion(db, &models.ReportVersion{
+		ReportID:                report.ID,
+		OrderID:                 report.OrderID,
+		AnalysisID:              reportVersionAnalysisID(analysis.ID),
+		SourceType:              models.ReportVersionSourceAdminWord,
+		Status:                  models.ReportVersionStatusAnalystSubmitted,
+		Content:                 report.Content,
+		WordURL:                 fileURL,
+		PDFURL:                  report.PdfURL,
+		InputSnapshot:           analysis.AIReportInputSnapshot,
+		TemplateVersion:         analysis.AIReportTemplateVersion,
+		DocumentTemplateVersion: services.VideoAnalysisDocumentTemplateVersion,
+		OriginalFileName:        file.Filename,
+		CreatedByUserID:         &adminID,
+		CreatedByRole:           "admin",
+	}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "记录报告版本失败")
+		return
+	}
 
 	_ = report // suppress unused warning
 	utils.Success(c, "AI 报告上传成功", gin.H{"url": fileURL})

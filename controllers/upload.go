@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/shaonianqiutan/backend/config"
 	"github.com/shaonianqiutan/backend/middleware"
+	"github.com/shaonianqiutan/backend/models"
 	"github.com/shaonianqiutan/backend/utils"
 )
 
@@ -198,6 +199,13 @@ func (ctrl *UploadController) UploadAvatar(c *gin.Context) {
 	}
 
 	fileURL := fmt.Sprintf("%s/uploads/avatars/%s", ctrl.baseURL, newFilename)
+
+	if err := config.GetDB().Model(&models.User{}).Where("id = ?", userID).Update("avatar", fileURL).Error; err != nil {
+		_ = os.Remove(savePath)
+		utils.Error(c, http.StatusInternalServerError, "更新头像失败: "+err.Error())
+		return
+	}
+
 	utils.Success(c, "头像上传成功", gin.H{
 		"avatar":   fileURL,
 		"filename": newFilename,

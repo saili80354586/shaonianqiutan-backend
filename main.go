@@ -49,6 +49,7 @@ func main() {
 		&models.Player{},
 		&models.SmsCode{},
 		&models.Report{},
+		&models.ReportVersion{},
 		&models.Order{},
 		&models.OrderAssignment{},
 		&models.OrderStatusHistory{},
@@ -339,14 +340,14 @@ func main() {
 		// 使用 StaticFS 限制可访问的文件类型，只允许图片和视频
 		uploadsFS := http.Dir("./uploads")
 		r.GET("/uploads/*filepath", func(c *gin.Context) {
-			filepath := c.Param("filepath")
+			filepath := strings.TrimPrefix(c.Param("filepath"), "/")
 			// 禁止访问以 . 开头的隐藏文件和目录遍历
 			if strings.Contains(filepath, "..") || strings.Contains(filepath, "//") {
 				c.AbortWithStatus(http.StatusForbidden)
 				return
 			}
 			// 只允许特定扩展名
-			allowedExts := []string{".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".mp4", ".mov", ".webm", ".pdf"}
+			allowedExts := []string{".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".mp4", ".mov", ".webm", ".pdf", ".doc", ".docx"}
 			lowerPath := strings.ToLower(filepath)
 			valid := false
 			for _, ext := range allowedExts {

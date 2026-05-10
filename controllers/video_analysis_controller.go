@@ -183,6 +183,18 @@ func (ctrl *VideoAnalysisController) notifyAdminsReportSubmitted(reportID uint, 
 }
 
 func videoAnalysisTextListJSON(text string) string {
+	items := videoAnalysisTextListItems(text)
+	if len(items) == 0 {
+		return "[]"
+	}
+	data, err := json.Marshal(items)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
+}
+
+func videoAnalysisTextListItems(text string) []string {
 	items := make([]string, 0)
 	for _, part := range strings.FieldsFunc(text, func(r rune) bool {
 		return r == '\n' || r == ';' || r == '；'
@@ -192,14 +204,102 @@ func videoAnalysisTextListJSON(text string) string {
 			items = append(items, item)
 		}
 	}
-	if len(items) == 0 {
-		return "[]"
+	return items
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
 	}
-	data, err := json.Marshal(items)
+	return ""
+}
+
+func calculateVideoAnalysisAgeFromBirthDate(birthDate string) int {
+	birthDate = strings.TrimSpace(birthDate)
+	if birthDate == "" {
+		return 0
+	}
+	layouts := []string{"2006-01-02", "2006/01/02", "01-02-2006"}
+	for _, layout := range layouts {
+		birth, err := time.Parse(layout, birthDate)
+		if err != nil {
+			continue
+		}
+		now := time.Now()
+		age := now.Year() - birth.Year()
+		if now.YearDay() < birth.YearDay() {
+			age--
+		}
+		if age > 0 {
+			return age
+		}
+	}
+	return 0
+}
+
+func (ctrl *VideoAnalysisController) applyVideoAnalysisPlayerProfileFallback(analysis *models.VideoAnalysis) map[string]interface{} {
+	updates := map[string]interface{}{}
+	if analysis == nil || analysis.UserID == 0 {
+		return updates
+	}
+
+	var player models.User
+	err := ctrl.db.Select(
+		"id", "name", "age", "birth_date", "height", "weight", "foot", "dominant_foot",
+		"position", "current_team", "club", "school",
+	).First(&player, analysis.UserID).Error
 	if err != nil {
-		return "[]"
+		return updates
 	}
-	return string(data)
+
+	setString := func(field string, current *string, fallback string) {
+		fallback = strings.TrimSpace(fallback)
+		if strings.TrimSpace(*current) != "" || fallback == "" {
+			return
+		}
+		*current = fallback
+		updates[field] = fallback
+	}
+	setInt := func(field string, current *int, fallback int) {
+		if *current > 0 || fallback <= 0 {
+			return
+		}
+		*current = fallback
+		updates[field] = fallback
+	}
+	setFloat := func(field string, current *float64, fallback float64) {
+		if *current > 0 || fallback <= 0 {
+			return
+		}
+		*current = fallback
+		updates[field] = fallback
+	}
+
+	setString("player_name", &analysis.PlayerName, player.Name)
+	age := player.Age
+	if age <= 0 {
+		age = calculateVideoAnalysisAgeFromBirthDate(player.BirthDate)
+	}
+	setInt("player_age", &analysis.PlayerAge, age)
+	setString("player_position", &analysis.PlayerPosition, player.Position)
+	setString("player_foot", &analysis.PlayerFoot, firstNonEmptyString(player.DominantFoot, player.Foot))
+	setFloat("player_height", &analysis.PlayerHeight, player.Height)
+	setFloat("player_weight", &analysis.PlayerWeight, player.Weight)
+	setString("player_team", &analysis.PlayerTeam, firstNonEmptyString(player.CurrentTeam, player.Club, player.School))
+
+	return updates
+}
+
+func (ctrl *VideoAnalysisController) persistVideoAnalysisPlayerProfileFallback(analysis *models.VideoAnalysis) {
+	updates := ctrl.applyVideoAnalysisPlayerProfileFallback(analysis)
+	if analysis == nil || analysis.ID == 0 || len(updates) == 0 {
+		return
+	}
+	if err := ctrl.db.Model(&models.VideoAnalysis{}).Where("id = ?", analysis.ID).Updates(updates).Error; err != nil {
+		log.Printf("[VideoAnalysis] persist player profile fallback failed: analysis=%d err=%v", analysis.ID, err)
+	}
 }
 
 func (ctrl *VideoAnalysisController) buildAIReportPlayerFacts(analysis *models.VideoAnalysis) ([]services.ReportFactInput, []services.ReportFactInput) {
@@ -260,13 +360,14 @@ func addAIReportFact(facts *[]services.ReportFactInput, label string, value stri
 }
 
 type aiReportInputSnapshot struct {
-	TemplateVersion string                        `json:"template_version"`
-	GeneratedAt     string                        `json:"generated_at"`
-	Player          aiReportInputSnapshotPlayer   `json:"player"`
-	Match           aiReportInputSnapshotMatch    `json:"match"`
-	Analysis        aiReportInputSnapshotAnalysis `json:"analysis"`
-	Scores          models.VideoAnalysisScores    `json:"scores"`
-	Highlights      []services.HighlightInput     `json:"highlights"`
+	TemplateVersion        string                        `json:"template_version"`
+	GeneratedAt            string                        `json:"generated_at"`
+	PeerBenchmarkGuideline string                        `json:"peer_benchmark_guideline"`
+	Player                 aiReportInputSnapshotPlayer   `json:"player"`
+	Match                  aiReportInputSnapshotMatch    `json:"match"`
+	Analysis               aiReportInputSnapshotAnalysis `json:"analysis"`
+	Scores                 models.VideoAnalysisScores    `json:"scores"`
+	Highlights             []services.HighlightInput     `json:"highlights"`
 }
 
 type aiReportInputSnapshotPlayer struct {
@@ -308,8 +409,9 @@ func buildAIReportInputSnapshot(analysis *models.VideoAnalysis, templateVersion 
 	}
 
 	snapshot := aiReportInputSnapshot{
-		TemplateVersion: templateVersion,
-		GeneratedAt:     time.Now().Format(time.RFC3339),
+		TemplateVersion:        templateVersion,
+		GeneratedAt:            time.Now().Format(time.RFC3339),
+		PeerBenchmarkGuideline: "基于球员年龄段、位置、本场评分与评语，客观分析其相对同龄球员常见水平的优势、短板和成长空间；如有身高体重，需结合年龄段常见身高体重水平与本场对抗、速度、护球、争顶等表现判断身体优势；没有同龄样本数据时不得编造排名、百分位、医学结论或权威分级。",
 		Player: aiReportInputSnapshotPlayer{
 			Name:              analysis.PlayerName,
 			Age:               analysis.PlayerAge,
@@ -349,6 +451,27 @@ func buildAIReportInputSnapshot(analysis *models.VideoAnalysis, templateVersion 
 		return "", err
 	}
 	return string(data), nil
+}
+
+func reportVersionAnalysisID(id uint) *uint {
+	if id == 0 {
+		return nil
+	}
+	value := id
+	return &value
+}
+
+func (ctrl *VideoAnalysisController) appendReportVersion(version *models.ReportVersion) {
+	if err := models.CreateReportVersion(ctrl.db, version); err != nil {
+		log.Printf("[ReportVersion] create failed for report %d: %v", version.ReportID, err)
+	}
+}
+
+func stringValue(value interface{}) string {
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return ""
 }
 
 func firstNonEmptyAIReport(values ...string) string {
@@ -693,6 +816,9 @@ func (ctrl *VideoAnalysisController) GetAnalysisByOrder(c *gin.Context) {
 
 	if analysis == nil {
 		utils.Success(c, "", nil)
+		return
+	}
+	if !ctrl.ensureAnalysisOwner(c, analysis) {
 		return
 	}
 	ctrl.hydrateAnalysisVideoURL(analysis)
@@ -1910,6 +2036,201 @@ func safeArchiveNamePart(value string) string {
 	return value
 }
 
+func (ctrl *VideoAnalysisController) buildVideoAnalysisReportInput(analysis *models.VideoAnalysis) (*services.VideoAnalysisReportInput, *models.VideoAnalysisScores, []services.HighlightInput, []services.ReportFactInput, []services.ReportFactInput) {
+	if analysis == nil {
+		return nil, nil, nil, nil, nil
+	}
+	ctrl.persistVideoAnalysisPlayerProfileFallback(analysis)
+
+	scores, err := models.ParseScoresFromJSON(analysis.Scores)
+	if err != nil || scores == nil {
+		scores = models.NewDefaultScores()
+	}
+	highlights, _ := ctrl.highlightRepo.FindIncludedInReport(analysis.ID)
+	playerProfileFacts, physicalTestFacts := ctrl.buildAIReportPlayerFacts(analysis)
+	highlightInputs := toAIReportHighlightInputs(highlights)
+
+	reportInput := &services.VideoAnalysisReportInput{
+		PlayerName:         analysis.PlayerName,
+		PlayerAge:          analysis.PlayerAge,
+		PlayerPosition:     analysis.PlayerPosition,
+		PlayerFoot:         analysis.PlayerFoot,
+		PlayerHeight:       analysis.PlayerHeight,
+		PlayerWeight:       analysis.PlayerWeight,
+		PlayerTeam:         analysis.PlayerTeam,
+		PlayerProfileFacts: playerProfileFacts,
+		PhysicalTestFacts:  physicalTestFacts,
+		MatchName:          analysis.MatchName,
+		MatchDate:          analysis.MatchDate,
+		MatchType:          analysis.MatchType,
+		OpponentLevel:      analysis.OpponentLevel,
+		Opponent:           analysis.Opponent,
+		PlayTime:           analysis.PlayTime,
+		Goals:              analysis.Goals,
+		Assists:            analysis.Assists,
+		OverallScore:       analysis.OverallScore,
+		PotentialLevel:     string(analysis.PotentialLevel),
+		Highlights:         highlightInputs,
+		Summary:            analysis.Summary,
+		Strengths:          analysis.Strengths,
+		Weaknesses:         analysis.Weaknesses,
+		Improvements:       analysis.Improvements,
+		AnalystNotes:       analysis.AnalystNotes,
+	}
+
+	reportInput.Scores = services.ScoresInput{
+		BallControl:          services.ScoreInput{Score: scores.BallControl.Score, Weight: scores.BallControl.Weight, Comment: scores.BallControl.Comment},
+		OffBallMovement:      services.ScoreInput{Score: scores.OffBallMovement.Score, Weight: scores.OffBallMovement.Weight, Comment: scores.OffBallMovement.Comment},
+		PressingAwareness:    services.ScoreInput{Score: scores.PressingAwareness.Score, Weight: scores.PressingAwareness.Weight, Comment: scores.PressingAwareness.Comment},
+		Positioning:          services.ScoreInput{Score: scores.Positioning.Score, Weight: scores.Positioning.Weight, Comment: scores.Positioning.Comment},
+		WidthParticipation:   services.ScoreInput{Score: scores.WidthParticipation.Score, Weight: scores.WidthParticipation.Weight, Comment: scores.WidthParticipation.Comment},
+		OffBallSupport:       services.ScoreInput{Score: scores.OffBallSupport.Score, Weight: scores.OffBallSupport.Weight, Comment: scores.OffBallSupport.Comment},
+		OneVOne:              services.ScoreInput{Score: scores.OneVOne.Score, Weight: scores.OneVOne.Weight, Comment: scores.OneVOne.Comment},
+		CrossingAssist:       services.ScoreInput{Score: scores.CrossingAssist.Score, Weight: scores.CrossingAssist.Weight, Comment: scores.CrossingAssist.Comment},
+		CombatAbility:        services.ScoreInput{Score: scores.CombatAbility.Score, Weight: scores.CombatAbility.Weight, Comment: scores.CombatAbility.Comment},
+		PaceRhythm:           services.ScoreInput{Score: scores.PaceRhythm.Score, Weight: scores.PaceRhythm.Weight, Comment: scores.PaceRhythm.Comment},
+		PassVision:           services.ScoreInput{Score: scores.PassVision.Score, Weight: scores.PassVision.Weight, Comment: scores.PassVision.Comment},
+		BodyPosture:          services.ScoreInput{Score: scores.BodyPosture.Score, Weight: scores.BodyPosture.Weight, Comment: scores.BodyPosture.Comment},
+		DefensiveCommitment:  services.ScoreInput{Score: scores.DefensiveCommitment.Score, Weight: scores.DefensiveCommitment.Weight, Comment: scores.DefensiveCommitment.Comment},
+		LossRecovery:         services.ScoreInput{Score: scores.LossRecovery.Score, Weight: scores.LossRecovery.Weight, Comment: scores.LossRecovery.Comment},
+		TeammateCoordination: services.ScoreInput{Score: scores.TeammateCoordination.Score, Weight: scores.TeammateCoordination.Weight, Comment: scores.TeammateCoordination.Comment},
+		SecondBall:           services.ScoreInput{Score: scores.SecondBall.Score, Weight: scores.SecondBall.Weight, Comment: scores.SecondBall.Comment},
+		AerialDuel:           services.ScoreInput{Score: scores.AerialDuel.Score, Weight: scores.AerialDuel.Weight, Comment: scores.AerialDuel.Comment},
+		DefensiveShape:       services.ScoreInput{Score: scores.DefensiveShape.Score, Weight: scores.DefensiveShape.Weight, Comment: scores.DefensiveShape.Comment},
+		RoleAdjustment:       services.ScoreInput{Score: scores.RoleAdjustment.Score, Weight: scores.RoleAdjustment.Weight, Comment: scores.RoleAdjustment.Comment},
+		DefensiveRhythm:      services.ScoreInput{Score: scores.DefensiveRhythm.Score, Weight: scores.DefensiveRhythm.Weight, Comment: scores.DefensiveRhythm.Comment},
+	}
+
+	return reportInput, scores, highlightInputs, playerProfileFacts, physicalTestFacts
+}
+
+func (ctrl *VideoAnalysisController) startAIReportGeneration(analysisID uint, reportID uint, reportVersion int, runningStatus string) {
+	if ctrl.aiService == nil || !ctrl.aiService.IsConfigured() {
+		return
+	}
+	if reportVersion <= 0 {
+		reportVersion = 1
+	}
+	if strings.TrimSpace(runningStatus) == "" {
+		runningStatus = "generating"
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[AIReport] panic recovered for analysis %d: %v", analysisID, r)
+				_ = ctrl.analysisRepo.Update(analysisID, map[string]interface{}{
+					"ai_report_status": "failed",
+				})
+			}
+		}()
+
+		analysis, err := ctrl.analysisRepo.FindByID(analysisID)
+		if err != nil || analysis == nil {
+			_ = ctrl.analysisRepo.Update(analysisID, map[string]interface{}{
+				"ai_report_status": "failed",
+			})
+			return
+		}
+
+		reportInput, scores, highlightInputs, playerProfileFacts, physicalTestFacts := ctrl.buildVideoAnalysisReportInput(analysis)
+		if reportInput == nil || scores == nil {
+			_ = ctrl.analysisRepo.Update(analysisID, map[string]interface{}{
+				"ai_report_status": "failed",
+			})
+			return
+		}
+
+		snapshotJSON, snapshotErr := buildAIReportInputSnapshot(analysis, services.VideoAnalysisReportTemplateVersion, scores, highlightInputs, playerProfileFacts, physicalTestFacts)
+		if snapshotErr != nil {
+			log.Printf("[AIReport] snapshot build failed for analysis %d: %v", analysisID, snapshotErr)
+		} else if snapshotJSON != "" {
+			if err := ctrl.analysisRepo.Update(analysisID, map[string]interface{}{
+				"ai_report_input_snapshot":   snapshotJSON,
+				"ai_report_template_version": services.VideoAnalysisReportTemplateVersion,
+				"ai_report_status":           runningStatus,
+			}); err != nil {
+				log.Printf("[AIReport] snapshot persist failed for analysis %d: %v", analysisID, err)
+			}
+		}
+
+		prompt := services.BuildReportPrompt(reportInput)
+		aiReport, err := ctrl.aiService.GenerateReport(prompt)
+		if err != nil {
+			log.Printf("[AIReport] generation failed for analysis %d: %v", analysisID, err)
+			_ = ctrl.analysisRepo.Update(analysisID, map[string]interface{}{
+				"ai_report_status": "failed",
+			})
+			return
+		}
+
+		updates := map[string]interface{}{
+			"ai_report":                  aiReport,
+			"ai_report_status":           "draft",
+			"ai_report_version":          reportVersion,
+			"ai_report_template_version": services.VideoAnalysisReportTemplateVersion,
+		}
+		if err := ctrl.analysisRepo.Update(analysisID, updates); err != nil {
+			log.Printf("[AIReport] persist failed for analysis %d: %v", analysisID, err)
+			return
+		}
+
+		if reportID == 0 {
+			return
+		}
+
+		reportUpdates := map[string]interface{}{
+			"content": aiReport,
+		}
+		if ctrl.reportGen != nil {
+			analysis.AIReport = aiReport
+			analysis.AIReportStatus = "draft"
+			analysis.AIReportVersion = reportVersion
+
+			var userForDoc models.User
+			_ = ctrl.db.First(&userForDoc, analysis.UserID).Error
+			var analystForDoc models.Analyst
+			_ = ctrl.db.First(&analystForDoc, analysis.AnalystID).Error
+
+			docHighlights, _ := ctrl.highlightRepo.FindIncludedInReport(analysis.ID)
+			wordPath, wordErr := ctrl.reportGen.GenerateVideoAnalysisWordReport(analysis, analystForDoc.Name, &userForDoc, docHighlights...)
+			if wordErr != nil {
+				log.Printf("[AIReport] word generation failed for analysis %d: %v", analysisID, wordErr)
+			} else if wordPath != "" {
+				reportUpdates["ai_report_url"] = wordPath
+			}
+
+			pdfPath, pdfErr := ctrl.reportGen.GenerateVideoAnalysisPDFReport(analysis, analystForDoc.Name, &userForDoc, docHighlights...)
+			if pdfErr != nil {
+				log.Printf("[AIReport] pdf generation failed for analysis %d: %v", analysisID, pdfErr)
+			} else if pdfPath != "" {
+				reportUpdates["pdf_url"] = pdfPath
+			}
+		}
+
+		reportRepo := models.NewReportRepository(ctrl.db)
+		if err := reportRepo.Update(reportID, reportUpdates); err != nil {
+			log.Printf("[AIReport] report update failed for analysis %d report %d: %v", analysisID, reportID, err)
+			return
+		}
+		ctrl.appendReportVersion(&models.ReportVersion{
+			ReportID:                reportID,
+			OrderID:                 analysis.OrderID,
+			AnalysisID:              reportVersionAnalysisID(analysis.ID),
+			VersionNo:               reportVersion,
+			SourceType:              models.ReportVersionSourceAI,
+			Status:                  models.ReportVersionStatusAIDraft,
+			Content:                 aiReport,
+			WordURL:                 stringValue(reportUpdates["ai_report_url"]),
+			PDFURL:                  stringValue(reportUpdates["pdf_url"]),
+			InputSnapshot:           snapshotJSON,
+			TemplateVersion:         services.VideoAnalysisReportTemplateVersion,
+			DocumentTemplateVersion: services.VideoAnalysisDocumentTemplateVersion,
+			CreatedByRole:           "system",
+		})
+	}()
+}
+
 // GenerateAIReportRequest AI报告生成请求
 type GenerateAIReportRequest struct {
 	AnalysisID uint `json:"analysis_id"`
@@ -1932,6 +2253,10 @@ func (ctrl *VideoAnalysisController) GenerateAIReport(c *gin.Context) {
 		utils.Error(c, http.StatusBadRequest, "请先完成评分")
 		return
 	}
+	if ctrl.aiService == nil || !ctrl.aiService.IsConfigured() {
+		utils.Error(c, http.StatusInternalServerError, "AI服务未配置")
+		return
+	}
 
 	// 如果已经在生成中，直接返回
 	if analysis.AIReportStatus == "generating" || analysis.AIReportStatus == "regenerating" {
@@ -1949,114 +2274,7 @@ func (ctrl *VideoAnalysisController) GenerateAIReport(c *gin.Context) {
 		"ai_report_status": nextStatus,
 	})
 
-	// 异步在后台生成报告，避免前端请求超时
-	go func(analysisID uint, currentVersion int) {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("[AIReport] panic recovered for analysis %d: %v", analysisID, r)
-				ctrl.analysisRepo.Update(analysisID, map[string]interface{}{
-					"ai_report_status": "failed",
-				})
-			}
-		}()
-
-		analysis, err := ctrl.analysisRepo.FindByID(analysisID)
-		if err != nil || analysis == nil {
-			ctrl.analysisRepo.Update(analysisID, map[string]interface{}{
-				"ai_report_status": "failed",
-			})
-			return
-		}
-
-		scores, _ := models.ParseScoresFromJSON(analysis.Scores)
-		highlights, _ := ctrl.highlightRepo.FindIncludedInReport(analysis.ID)
-		playerProfileFacts, physicalTestFacts := ctrl.buildAIReportPlayerFacts(analysis)
-
-		highlightInputs := toAIReportHighlightInputs(highlights)
-
-		reportInput := &services.VideoAnalysisReportInput{
-			PlayerName:         analysis.PlayerName,
-			PlayerAge:          analysis.PlayerAge,
-			PlayerPosition:     analysis.PlayerPosition,
-			PlayerFoot:         analysis.PlayerFoot,
-			PlayerHeight:       analysis.PlayerHeight,
-			PlayerWeight:       analysis.PlayerWeight,
-			PlayerTeam:         analysis.PlayerTeam,
-			PlayerProfileFacts: playerProfileFacts,
-			PhysicalTestFacts:  physicalTestFacts,
-			MatchName:          analysis.MatchName,
-			MatchDate:          analysis.MatchDate,
-			MatchType:          analysis.MatchType,
-			OpponentLevel:      analysis.OpponentLevel,
-			Opponent:           analysis.Opponent,
-			PlayTime:           analysis.PlayTime,
-			Goals:              analysis.Goals,
-			Assists:            analysis.Assists,
-			OverallScore:       analysis.OverallScore,
-			PotentialLevel:     string(analysis.PotentialLevel),
-			Highlights:         highlightInputs,
-			Summary:            analysis.Summary,
-			Strengths:          analysis.Strengths,
-			Weaknesses:         analysis.Weaknesses,
-			Improvements:       analysis.Improvements,
-			AnalystNotes:       analysis.AnalystNotes,
-		}
-
-		scoresInput := services.ScoresInput{
-			BallControl:          services.ScoreInput{Score: scores.BallControl.Score, Weight: scores.BallControl.Weight, Comment: scores.BallControl.Comment},
-			OffBallMovement:      services.ScoreInput{Score: scores.OffBallMovement.Score, Weight: scores.OffBallMovement.Weight, Comment: scores.OffBallMovement.Comment},
-			PressingAwareness:    services.ScoreInput{Score: scores.PressingAwareness.Score, Weight: scores.PressingAwareness.Weight, Comment: scores.PressingAwareness.Comment},
-			Positioning:          services.ScoreInput{Score: scores.Positioning.Score, Weight: scores.Positioning.Weight, Comment: scores.Positioning.Comment},
-			WidthParticipation:   services.ScoreInput{Score: scores.WidthParticipation.Score, Weight: scores.WidthParticipation.Weight, Comment: scores.WidthParticipation.Comment},
-			OffBallSupport:       services.ScoreInput{Score: scores.OffBallSupport.Score, Weight: scores.OffBallSupport.Weight, Comment: scores.OffBallSupport.Comment},
-			OneVOne:              services.ScoreInput{Score: scores.OneVOne.Score, Weight: scores.OneVOne.Weight, Comment: scores.OneVOne.Comment},
-			CrossingAssist:       services.ScoreInput{Score: scores.CrossingAssist.Score, Weight: scores.CrossingAssist.Weight, Comment: scores.CrossingAssist.Comment},
-			CombatAbility:        services.ScoreInput{Score: scores.CombatAbility.Score, Weight: scores.CombatAbility.Weight, Comment: scores.CombatAbility.Comment},
-			PaceRhythm:           services.ScoreInput{Score: scores.PaceRhythm.Score, Weight: scores.PaceRhythm.Weight, Comment: scores.PaceRhythm.Comment},
-			PassVision:           services.ScoreInput{Score: scores.PassVision.Score, Weight: scores.PassVision.Weight, Comment: scores.PassVision.Comment},
-			BodyPosture:          services.ScoreInput{Score: scores.BodyPosture.Score, Weight: scores.BodyPosture.Weight, Comment: scores.BodyPosture.Comment},
-			DefensiveCommitment:  services.ScoreInput{Score: scores.DefensiveCommitment.Score, Weight: scores.DefensiveCommitment.Weight, Comment: scores.DefensiveCommitment.Comment},
-			LossRecovery:         services.ScoreInput{Score: scores.LossRecovery.Score, Weight: scores.LossRecovery.Weight, Comment: scores.LossRecovery.Comment},
-			TeammateCoordination: services.ScoreInput{Score: scores.TeammateCoordination.Score, Weight: scores.TeammateCoordination.Weight, Comment: scores.TeammateCoordination.Comment},
-			SecondBall:           services.ScoreInput{Score: scores.SecondBall.Score, Weight: scores.SecondBall.Weight, Comment: scores.SecondBall.Comment},
-			AerialDuel:           services.ScoreInput{Score: scores.AerialDuel.Score, Weight: scores.AerialDuel.Weight, Comment: scores.AerialDuel.Comment},
-			DefensiveShape:       services.ScoreInput{Score: scores.DefensiveShape.Score, Weight: scores.DefensiveShape.Weight, Comment: scores.DefensiveShape.Comment},
-			RoleAdjustment:       services.ScoreInput{Score: scores.RoleAdjustment.Score, Weight: scores.RoleAdjustment.Weight, Comment: scores.RoleAdjustment.Comment},
-			DefensiveRhythm:      services.ScoreInput{Score: scores.DefensiveRhythm.Score, Weight: scores.DefensiveRhythm.Weight, Comment: scores.DefensiveRhythm.Comment},
-		}
-		reportInput.Scores = scoresInput
-
-		snapshotJSON, snapshotErr := buildAIReportInputSnapshot(analysis, services.VideoAnalysisReportTemplateVersion, scores, highlightInputs, playerProfileFacts, physicalTestFacts)
-		if snapshotErr != nil {
-			log.Printf("[AIReport] snapshot build failed for analysis %d: %v", analysisID, snapshotErr)
-		} else {
-			if err := ctrl.analysisRepo.Update(analysisID, map[string]interface{}{
-				"ai_report_input_snapshot":   snapshotJSON,
-				"ai_report_template_version": services.VideoAnalysisReportTemplateVersion,
-				"ai_report_status":           nextStatus,
-			}); err != nil {
-				log.Printf("[AIReport] snapshot persist failed for analysis %d: %v", analysisID, err)
-			}
-		}
-
-		prompt := services.BuildReportPrompt(reportInput)
-		aiReport, err := ctrl.aiService.GenerateReport(prompt)
-		if err != nil {
-			log.Printf("[AIReport] generation failed for analysis %d: %v", analysisID, err)
-			ctrl.analysisRepo.Update(analysisID, map[string]interface{}{
-				"ai_report_status": "failed",
-			})
-			return
-		}
-
-		newVersion := currentVersion + 1
-		ctrl.analysisRepo.Update(analysisID, map[string]interface{}{
-			"ai_report":                  aiReport,
-			"ai_report_status":           "draft",
-			"ai_report_version":          newVersion,
-			"ai_report_template_version": services.VideoAnalysisReportTemplateVersion,
-		})
-	}(analysis.ID, analysis.AIReportVersion)
+	ctrl.startAIReportGeneration(req.AnalysisID, 0, analysis.AIReportVersion+1, nextStatus)
 
 	utils.Success(c, "AI报告生成任务已提交，预计需要3-5分钟", gin.H{
 		"status": nextStatus,
@@ -2097,12 +2315,75 @@ func (ctrl *VideoAnalysisController) UpdateAIReport(c *gin.Context) {
 		return
 	}
 
+	reportRepo := models.NewReportRepository(ctrl.db)
+	if report, _ := reportRepo.FindByOrderID(analysis.OrderID); report != nil {
+		ctrl.appendReportVersion(&models.ReportVersion{
+			ReportID:                report.ID,
+			OrderID:                 analysis.OrderID,
+			AnalysisID:              reportVersionAnalysisID(analysis.ID),
+			VersionNo:               analysis.AIReportVersion + 1,
+			SourceType:              models.ReportVersionSourceOnlineEdit,
+			Status:                  models.ReportVersionStatusAnalystEditing,
+			Content:                 req.Report,
+			WordURL:                 report.AIReportURL,
+			PDFURL:                  report.PdfURL,
+			InputSnapshot:           analysis.AIReportInputSnapshot,
+			TemplateVersion:         analysis.AIReportTemplateVersion,
+			DocumentTemplateVersion: services.VideoAnalysisDocumentTemplateVersion,
+			CreatedByRole:           "analyst",
+		})
+	}
+
 	utils.Success(c, "报告已保存", nil)
 }
 
-// ConfirmAIReport 确认AI报告并提交管理员审核
-// 核心操作：1.更新video_analyses状态 2.创建/更新待审核reports记录
+func buildVideoAnalysisSubmissionContent(analysis *models.VideoAnalysis, analystName string) string {
+	if analysis == nil {
+		return ""
+	}
+
+	var builder strings.Builder
+	builder.WriteString("# 视频分析报告\n\n")
+	builder.WriteString(fmt.Sprintf("**球员姓名：** %s  \n", analysis.PlayerName))
+	builder.WriteString(fmt.Sprintf("**球员位置：** %s  \n", analysis.PlayerPosition))
+	builder.WriteString(fmt.Sprintf("**分析师：** %s  \n", firstNonEmptyString(analystName, "未知分析师")))
+	builder.WriteString(fmt.Sprintf("**综合评分：** %.1f / 100  \n", analysis.OverallScore))
+	builder.WriteString(fmt.Sprintf("**潜力等级：** %s\n\n", models.GetPotentialLevel(analysis.OverallScore)))
+
+	if summary := strings.TrimSpace(analysis.Summary); summary != "" {
+		builder.WriteString("## 综合评价\n\n")
+		builder.WriteString(summary)
+		builder.WriteString("\n\n")
+	}
+
+	appendSection := func(title string, raw string) {
+		items := videoAnalysisTextListItems(raw)
+		if len(items) == 0 {
+			return
+		}
+		builder.WriteString("## " + title + "\n\n")
+		for _, item := range items {
+			builder.WriteString("- " + item + "\n")
+		}
+		builder.WriteString("\n")
+	}
+
+	appendSection("核心优势", analysis.Strengths)
+	appendSection("待提升点", analysis.Weaknesses)
+	appendSection("训练建议", analysis.Improvements)
+	appendSection("分析师备注", analysis.AnalystNotes)
+
+	return builder.String()
+}
+
+// ConfirmAIReport 保留旧路径兼容，实际提交逻辑走 ConfirmReport。
 func (ctrl *VideoAnalysisController) ConfirmAIReport(c *gin.Context) {
+	ctrl.ConfirmReport(c)
+}
+
+// ConfirmReport 提交评分与文字评价并生成待审核报告。
+// 核心操作：1.更新 video_analyses 状态 2.生成交付文档 3.创建/更新待审核 reports 记录。
+func (ctrl *VideoAnalysisController) ConfirmReport(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
@@ -2116,9 +2397,12 @@ func (ctrl *VideoAnalysisController) ConfirmAIReport(c *gin.Context) {
 		return
 	}
 
-	// 校验：AI报告必须已生成
-	if analysis.AIReport == "" {
-		utils.Error(c, http.StatusBadRequest, "请先生成AI报告")
+	if analysis.OverallScore <= 0 {
+		utils.Error(c, http.StatusBadRequest, "请先完成评分")
+		return
+	}
+	if strings.TrimSpace(analysis.Summary) == "" {
+		utils.Error(c, http.StatusBadRequest, "请先填写综合评语")
 		return
 	}
 
@@ -2126,7 +2410,18 @@ func (ctrl *VideoAnalysisController) ConfirmAIReport(c *gin.Context) {
 	_ = ctrl.db.First(&userForDoc, analysis.UserID).Error
 	var analystForDoc models.Analyst
 	_ = ctrl.db.First(&analystForDoc, analysis.AnalystID).Error
+	reportContent := buildVideoAnalysisSubmissionContent(analysis, analystForDoc.Name)
+	nextReportVersion := analysis.AIReportVersion + 1
+	if nextReportVersion <= 0 {
+		nextReportVersion = 1
+	}
+	analysis.AIReportVersion = nextReportVersion
 
+	if ctrl.aiService != nil && !ctrl.aiService.IsConfigured() {
+		utils.Error(c, http.StatusInternalServerError, "AI服务未配置，请检查 AI_API_KEY / AI_BASE_URL / AI_MODEL 后重试")
+		return
+	}
+	generateAIReport := ctrl.aiService != nil
 	var ratingMD, playerMD, wordReportURL string
 	var pdfReportURL string
 	if ctrl.reportGen != nil {
@@ -2138,25 +2433,33 @@ func (ctrl *VideoAnalysisController) ConfirmAIReport(c *gin.Context) {
 		ratingMD = ratingPath
 		playerMD = playerPath
 
-		wordPath, wordErr := ctrl.reportGen.GenerateVideoAnalysisWordReport(analysis, analystForDoc.Name, &userForDoc)
-		if wordErr != nil {
-			utils.Error(c, http.StatusInternalServerError, "生成正式Word报告失败: "+wordErr.Error())
-			return
-		}
-		wordReportURL = wordPath
+		if !generateAIReport {
+			docHighlights, _ := ctrl.highlightRepo.FindIncludedInReport(analysis.ID)
+			wordPath, wordErr := ctrl.reportGen.GenerateVideoAnalysisWordReport(analysis, analystForDoc.Name, &userForDoc, docHighlights...)
+			if wordErr != nil {
+				utils.Error(c, http.StatusInternalServerError, "生成正式Word报告失败: "+wordErr.Error())
+				return
+			}
+			wordReportURL = wordPath
 
-		pdfPath, pdfErr := ctrl.reportGen.GenerateVideoAnalysisPDFReport(analysis, analystForDoc.Name, &userForDoc)
-		if pdfErr != nil {
-			utils.Error(c, http.StatusInternalServerError, "生成正式PDF报告失败: "+pdfErr.Error())
-			return
+			pdfPath, pdfErr := ctrl.reportGen.GenerateVideoAnalysisPDFReport(analysis, analystForDoc.Name, &userForDoc, docHighlights...)
+			if pdfErr != nil {
+				utils.Error(c, http.StatusInternalServerError, "生成正式PDF报告失败: "+pdfErr.Error())
+				return
+			}
+			pdfReportURL = pdfPath
 		}
-		pdfReportURL = pdfPath
 	}
 
 	// 2. 更新 video_analyses 状态
+	aiReportStatus := "confirmed"
+	if generateAIReport {
+		aiReportStatus = "generating"
+	}
 	updates := map[string]interface{}{
-		"ai_report_status": "confirmed",
-		"status":           models.AnalysisStatusSubmitted,
+		"status":            models.AnalysisStatusSubmitted,
+		"ai_report_status":  aiReportStatus,
+		"ai_report_version": nextReportVersion,
 	}
 	if ratingMD != "" {
 		updates["rating_report_md"] = ratingMD
@@ -2179,7 +2482,7 @@ func (ctrl *VideoAnalysisController) ConfirmAIReport(c *gin.Context) {
 	if existingReport != nil {
 		reportID = existingReport.ID
 		reportUpdates := map[string]interface{}{
-			"content":        analysis.AIReport,
+			"content":        reportContent,
 			"status":         models.ReportStatusProcessing,
 			"overall_rating": analysis.OverallScore,
 			"potential":      string(analysis.PotentialLevel),
@@ -2213,7 +2516,7 @@ func (ctrl *VideoAnalysisController) ConfirmAIReport(c *gin.Context) {
 			AnalystID:      analysis.AnalystID,
 			PlayerName:     analysis.PlayerName,
 			PlayerPosition: analysis.PlayerPosition,
-			Content:        analysis.AIReport,
+			Content:        reportContent,
 			Status:         models.ReportStatusProcessing,
 			OverallRating:  analysis.OverallScore,
 			Potential:      string(analysis.PotentialLevel),
@@ -2240,12 +2543,14 @@ func (ctrl *VideoAnalysisController) ConfirmAIReport(c *gin.Context) {
 		return
 	}
 
-	if strings.TrimSpace(analysis.AIReportInputSnapshot) == "" {
+	currentSnapshot := strings.TrimSpace(analysis.AIReportInputSnapshot)
+	if currentSnapshot == "" {
 		scores, _ := models.ParseScoresFromJSON(analysis.Scores)
 		highlights, _ := ctrl.highlightRepo.FindIncludedInReport(analysis.ID)
 		playerProfileFacts, physicalTestFacts := ctrl.buildAIReportPlayerFacts(analysis)
 		snapshotJSON, snapshotErr := buildAIReportInputSnapshot(analysis, services.VideoAnalysisReportTemplateVersion, scores, toAIReportHighlightInputs(highlights), playerProfileFacts, physicalTestFacts)
 		if snapshotErr == nil && snapshotJSON != "" {
+			currentSnapshot = snapshotJSON
 			_ = ctrl.analysisRepo.Update(analysis.ID, map[string]interface{}{
 				"ai_report_input_snapshot":   snapshotJSON,
 				"ai_report_template_version": services.VideoAnalysisReportTemplateVersion,
@@ -2253,13 +2558,40 @@ func (ctrl *VideoAnalysisController) ConfirmAIReport(c *gin.Context) {
 		}
 	}
 
+	if !generateAIReport {
+		ctrl.appendReportVersion(&models.ReportVersion{
+			ReportID:                reportID,
+			OrderID:                 analysis.OrderID,
+			AnalysisID:              reportVersionAnalysisID(analysis.ID),
+			VersionNo:               nextReportVersion,
+			SourceType:              models.ReportVersionSourceSystem,
+			Status:                  models.ReportVersionStatusAnalystSubmitted,
+			Content:                 reportContent,
+			WordURL:                 wordReportURL,
+			PDFURL:                  pdfReportURL,
+			InputSnapshot:           currentSnapshot,
+			TemplateVersion:         services.VideoAnalysisReportTemplateVersion,
+			DocumentTemplateVersion: services.VideoAnalysisDocumentTemplateVersion,
+			CreatedByRole:           "system",
+		})
+	}
+
 	ctrl.notifyAdminsReportSubmitted(reportID, analysis.PlayerName)
 
-	utils.Success(c, "报告已提交审核，文档已生成", gin.H{
+	if generateAIReport {
+		ctrl.startAIReportGeneration(analysis.ID, reportID, nextReportVersion, "generating")
+	}
+
+	responseMessage := "报告已提交审核，文档已生成"
+	if generateAIReport {
+		responseMessage = "评分已提交，视频分析报告正在生成，预计5-10分钟后可在订单详情查看"
+	}
+	utils.Success(c, responseMessage, gin.H{
 		"order_id":    analysis.OrderID,
 		"analysis_id": id,
 		"report_id":   reportID,
 		"word_url":    wordReportURL,
+		"status":      aiReportStatus,
 	})
 }
 
@@ -2307,7 +2639,12 @@ func (ctrl *VideoAnalysisController) CreateFromOrder(c *gin.Context) {
 
 	existing, _ := ctrl.analysisRepo.FindByOrderID(req.OrderID)
 	if existing != nil {
-		utils.Error(c, http.StatusBadRequest, "该订单已有分析记录")
+		if existing.AnalystID != *order.AnalystID {
+			utils.Error(c, http.StatusForbidden, "无权操作此分析")
+			return
+		}
+		ctrl.hydrateAnalysisVideoURL(existing)
+		utils.Success(c, "分析记录已存在", existing)
 		return
 	}
 
@@ -2323,6 +2660,7 @@ func (ctrl *VideoAnalysisController) CreateFromOrder(c *gin.Context) {
 		VideoURL:       order.VideoURL,
 		Status:         models.AnalysisStatusScoring,
 	}
+	ctrl.applyVideoAnalysisPlayerProfileFallback(analysis)
 
 	err := ctrl.analysisRepo.Create(analysis)
 	if err != nil {

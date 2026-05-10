@@ -38,6 +38,7 @@ func setupVideoAnalysisControllerTest(t *testing.T) (*gorm.DB, *VideoAnalysisCon
 		&models.OrderAssignment{},
 		&models.OrderStatusHistory{},
 		&models.Report{},
+		&models.ReportVersion{},
 		&models.VideoAnalysis{},
 		&models.AnalysisHighlight{},
 		&models.VideoClipExportJob{},
@@ -155,6 +156,84 @@ func TestCreateVideoAnalysisFromOrderRequiresAssignedAnalyst(t *testing.T) {
 	}
 	if analysis.VideoURL != order.VideoURL {
 		t.Fatalf("created analysis video_url = %q, want %q", analysis.VideoURL, order.VideoURL)
+	}
+}
+
+func TestCreateVideoAnalysisFromOrderReturnsExistingForSameAnalyst(t *testing.T) {
+	db, ctrl, owner, _ := setupVideoAnalysisControllerTest(t)
+
+	order := models.Order{
+		UserID:         100,
+		AnalystID:      &owner.ID,
+		OrderNo:        "VA-ORDER-IDEMPOTENT",
+		Amount:         99,
+		Status:         models.OrderStatusProcessing,
+		VideoURL:       "/uploads/videos/source-idempotent.mp4",
+		PlayerName:     "Demo Player",
+		PlayerPosition: "winger",
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+
+	req := CreateAnalysisFromOrderRequest{OrderID: order.ID}
+	first := performVideoAnalysisRequest(t, owner.ID, http.MethodPost, "/video-analysis/create-from-order", req, nil, ctrl.CreateFromOrder)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first create status = %d, want %d, body=%s", first.Code, http.StatusOK, first.Body.String())
+	}
+
+	second := performVideoAnalysisRequest(t, owner.ID, http.MethodPost, "/video-analysis/create-from-order", req, nil, ctrl.CreateFromOrder)
+	if second.Code != http.StatusOK {
+		t.Fatalf("second create status = %d, want %d, body=%s", second.Code, http.StatusOK, second.Body.String())
+	}
+
+	var count int64
+	if err := db.Model(&models.VideoAnalysis{}).Where("order_id = ?", order.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count analyses: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("analysis count = %d, want 1", count)
+	}
+
+	var body struct {
+		Success bool                 `json:"success"`
+		Data    models.VideoAnalysis `json:"data"`
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode second response: %v", err)
+	}
+	if !body.Success || body.Data.OrderID != order.ID || body.Data.AnalystID != owner.ID {
+		t.Fatalf("second response = %#v, want existing owned analysis", body)
+	}
+}
+
+func TestGetAnalysisByOrderRequiresAnalysisOwner(t *testing.T) {
+	db, ctrl, owner, other := setupVideoAnalysisControllerTest(t)
+
+	order := models.Order{
+		UserID:    100,
+		AnalystID: &owner.ID,
+		OrderNo:   "VA-ORDER-MISMATCH",
+		Amount:    99,
+		Status:    models.OrderStatusProcessing,
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+
+	analysis := models.VideoAnalysis{
+		OrderID:   order.ID,
+		AnalystID: other.ID,
+		UserID:    order.UserID,
+		Status:    models.AnalysisStatusScoring,
+	}
+	if err := db.Create(&analysis).Error; err != nil {
+		t.Fatalf("create mismatched analysis: %v", err)
+	}
+
+	res := performVideoAnalysisRequest(t, owner.ID, http.MethodGet, "/video-analysis/by-order?order_id="+strconv.Itoa(int(order.ID)), nil, nil, ctrl.GetAnalysisByOrder)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("mismatched owner status = %d, want %d, body=%s", res.Code, http.StatusForbidden, res.Body.String())
 	}
 }
 
@@ -351,25 +430,10 @@ func TestVideoAnalysisConfirmReportApprovalAndPlayerVisibility(t *testing.T) {
 		t.Fatalf("seed analysis scoring fields: %v", err)
 	}
 
-	reportContent := "# Flow Player AI Report\n\n整体表现稳定。"
 	params := gin.Params{{Key: "id", Value: strconv.Itoa(int(analysis.ID))}}
-	updateRes := performVideoAnalysisRequest(t, owner.ID, http.MethodPut, "/video-analysis/"+params[0].Value+"/ai-report", map[string]string{
-		"report": reportContent,
-	}, params, ctrl.UpdateAIReport)
-	if updateRes.Code != http.StatusOK {
-		t.Fatalf("update ai report status = %d, want %d, body=%s", updateRes.Code, http.StatusOK, updateRes.Body.String())
-	}
-	var editedAnalysis models.VideoAnalysis
-	if err := db.First(&editedAnalysis, analysis.ID).Error; err != nil {
-		t.Fatalf("reload edited analysis: %v", err)
-	}
-	if editedAnalysis.AIReportVersion != 1 {
-		t.Fatalf("ai report version after edit = %d, want 1", editedAnalysis.AIReportVersion)
-	}
-
-	confirmRes := performVideoAnalysisRequest(t, owner.ID, http.MethodPost, "/video-analysis/"+params[0].Value+"/confirm-ai-report", nil, params, ctrl.ConfirmAIReport)
+	confirmRes := performVideoAnalysisRequest(t, owner.ID, http.MethodPost, "/video-analysis/"+params[0].Value+"/submit-report", nil, params, ctrl.ConfirmReport)
 	if confirmRes.Code != http.StatusOK {
-		t.Fatalf("confirm ai report status = %d, want %d, body=%s", confirmRes.Code, http.StatusOK, confirmRes.Body.String())
+		t.Fatalf("submit report status = %d, want %d, body=%s", confirmRes.Code, http.StatusOK, confirmRes.Body.String())
 	}
 
 	var submittedAnalysis models.VideoAnalysis
@@ -409,7 +473,7 @@ func TestVideoAnalysisConfirmReportApprovalAndPlayerVisibility(t *testing.T) {
 	if report.Status != models.ReportStatusProcessing {
 		t.Fatalf("report status after confirm = %s, want %s", report.Status, models.ReportStatusProcessing)
 	}
-	if report.UserID != player.ID || report.AnalystID != owner.ID || report.Content != reportContent {
+	if report.UserID != player.ID || report.AnalystID != owner.ID || !strings.Contains(report.Content, "整体表现稳定，边路参与积极。") {
 		t.Fatalf("bridged report fields mismatch: user=%d analyst=%d content=%q", report.UserID, report.AnalystID, report.Content)
 	}
 	if report.Strengths != `["边路推进积极","连续动作稳定"]` {
@@ -441,6 +505,19 @@ func TestVideoAnalysisConfirmReportApprovalAndPlayerVisibility(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(reportsDir, filepath.Base(report.PdfURL))); err != nil {
 		t.Fatalf("expected generated pdf on disk: %v", err)
+	}
+	versions, err := models.FindReportVersionsByReportID(db, report.ID)
+	if err != nil {
+		t.Fatalf("find report versions: %v", err)
+	}
+	if len(versions) != 1 {
+		t.Fatalf("report version count after submit = %d, want 1", len(versions))
+	}
+	if versions[0].SourceType != models.ReportVersionSourceSystem || versions[0].Status != models.ReportVersionStatusAnalystSubmitted {
+		t.Fatalf("unexpected submitted version: %#v", versions[0])
+	}
+	if !strings.Contains(versions[0].InputSnapshot, "同龄") {
+		t.Fatalf("expected peer benchmark guideline in version input snapshot")
 	}
 
 	var linkedOrder models.Order
@@ -477,6 +554,16 @@ func TestVideoAnalysisConfirmReportApprovalAndPlayerVisibility(t *testing.T) {
 	}
 	if approvedReport.Status != models.ReportStatusCompleted {
 		t.Fatalf("report status after approval = %s, want %s", approvedReport.Status, models.ReportStatusCompleted)
+	}
+	versions, err = models.FindReportVersionsByReportID(db, report.ID)
+	if err != nil {
+		t.Fatalf("find approved report versions: %v", err)
+	}
+	if len(versions) != 2 {
+		t.Fatalf("report version count after approval = %d, want 2", len(versions))
+	}
+	if versions[0].Status != models.ReportVersionStatusApproved || versions[0].SourceType != models.ReportVersionSourceAdminReview {
+		t.Fatalf("unexpected approved version: %#v", versions[0])
 	}
 
 	playerListRecorder := httptest.NewRecorder()

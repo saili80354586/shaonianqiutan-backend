@@ -2,6 +2,9 @@ package services
 
 import (
 	"archive/zip"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +16,7 @@ import (
 
 func TestGenerateVideoAnalysisWordReportCreatesDocx(t *testing.T) {
 	reportsDir := t.TempDir()
+	setupBrandTestAssets(t, reportsDir)
 	generator := NewReportGenerator(reportsDir)
 
 	analysis := &models.VideoAnalysis{
@@ -41,7 +45,11 @@ func TestGenerateVideoAnalysisWordReportCreatesDocx(t *testing.T) {
 		Club:     "少年俱乐部",
 	}
 
-	reportURL, err := generator.GenerateVideoAnalysisWordReport(analysis, "测试分析师", user)
+	highlights := []models.AnalysisHighlight{
+		{Timestamp: "12:20", MarkerType: models.HighlightMarkerHighlight, TagType: models.HighlightDribble, Description: "边路连续突破后形成传中。"},
+		{Mode: models.HighlightModeRange, StartTimeMs: 20*60*1000 + 10*1000, EndTimeMs: intPtr(20*60*1000 + 28*1000), MarkerType: models.HighlightMarkerIssue, TagType: models.HighlightPositioningError, Description: "回防线路过直。"},
+	}
+	reportURL, err := generator.GenerateVideoAnalysisWordReport(analysis, "测试分析师", user, highlights...)
 	if err != nil {
 		t.Fatalf("generate word report: %v", err)
 	}
@@ -55,15 +63,35 @@ func TestGenerateVideoAnalysisWordReportCreatesDocx(t *testing.T) {
 	docxPath := filepath.Join(reportsDir, filepath.Base(reportURL))
 	documentXML := readDocxEntry(t, docxPath, "word/document.xml")
 	for _, want := range []string{
-		"少年球探视频分析报告",
+		"青少年足球视频分析报告",
+		"报告编号",
+		"VA-000042-v2",
 		VideoAnalysisReportTemplateVersion,
+		VideoAnalysisDocumentTemplateVersion,
 		"测试/球员",
-		"综合评分：82.5 / 100",
+		"综合评分",
+		"82.5",
+		"评分概览",
+		"关键片段时间轴",
+		"边路连续突破后形成传中",
 		"边路推进积极",
 		"技术表现",
+		"交付说明与免责声明",
+		"<w:drawing>",
 	} {
 		if !strings.Contains(documentXML, want) {
 			t.Fatalf("document.xml missing %q", want)
+		}
+	}
+	documentRels := readDocxEntry(t, docxPath, "word/_rels/document.xml.rels")
+	for _, want := range []string{"rIdFooter1", "rIdNumbering", "rIdImage1", "rIdImage2"} {
+		if !strings.Contains(documentRels, want) {
+			t.Fatalf("document rels missing %q", want)
+		}
+	}
+	for _, entry := range []string{"word/footer1.xml", "word/numbering.xml", "word/media/image1.png", "word/media/image2.png"} {
+		if !docxEntryExists(t, docxPath, entry) {
+			t.Fatalf("expected docx entry %s", entry)
 		}
 	}
 	if strings.Contains(documentXML, user.Phone) {
@@ -73,6 +101,7 @@ func TestGenerateVideoAnalysisWordReportCreatesDocx(t *testing.T) {
 
 func TestGenerateVideoAnalysisPDFReportCreatesPdf(t *testing.T) {
 	reportsDir := t.TempDir()
+	setupBrandTestAssets(t, reportsDir)
 	generator := NewReportGenerator(reportsDir)
 
 	analysis := &models.VideoAnalysis{
@@ -91,7 +120,10 @@ func TestGenerateVideoAnalysisPDFReportCreatesPdf(t *testing.T) {
 		AIReportVersion: 1,
 	}
 
-	reportURL, err := generator.GenerateVideoAnalysisPDFReport(analysis, "测试分析师", nil)
+	highlights := []models.AnalysisHighlight{
+		{Timestamp: "08:30", MarkerType: models.HighlightMarkerObservation, TagType: models.HighlightTacticalNote, Description: "主动回撤接应，帮助中场出球。"},
+	}
+	reportURL, err := generator.GenerateVideoAnalysisPDFReport(analysis, "测试分析师", nil, highlights...)
 	if err != nil {
 		t.Fatalf("generate pdf report: %v", err)
 	}
@@ -108,10 +140,42 @@ func TestGenerateVideoAnalysisPDFReportCreatesPdf(t *testing.T) {
 		t.Fatalf("read generated pdf: %v", err)
 	}
 	content := string(raw)
-	for _, want := range []string{"%PDF-1.4", "/Type /Catalog", "/UniGB-UCS2-H", "STSong-Light", "%%EOF"} {
+	for _, want := range []string{"%PDF-1.4", "/Type /Catalog", "/UniGB-UCS2-H", "STSong-Light", "/Subtype /Image", "/XObject", "%%EOF"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("pdf missing %q", want)
 		}
+	}
+}
+
+func intPtr(value int) *int {
+	return &value
+}
+
+func setupBrandTestAssets(t *testing.T, dir string) {
+	t.Helper()
+	light := filepath.Join(dir, "brand-light.png")
+	icon := filepath.Join(dir, "brand-icon.png")
+	writeTestPNG(t, light, color.RGBA{R: 255, G: 255, B: 255, A: 255})
+	writeTestPNG(t, icon, color.RGBA{R: 0, G: 180, B: 220, A: 255})
+	t.Setenv("REPORT_BRAND_LOGO_LIGHT", light)
+	t.Setenv("REPORT_BRAND_LOGO_ICON", icon)
+}
+
+func writeTestPNG(t *testing.T, path string, fill color.RGBA) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 80, 24))
+	for y := 0; y < 24; y++ {
+		for x := 0; x < 80; x++ {
+			img.SetRGBA(x, y, fill)
+		}
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create png: %v", err)
+	}
+	defer file.Close()
+	if err := png.Encode(file, img); err != nil {
+		t.Fatalf("encode png: %v", err)
 	}
 }
 
@@ -140,4 +204,20 @@ func readDocxEntry(t *testing.T, path string, entryName string) string {
 	}
 	t.Fatalf("docx entry %s not found", entryName)
 	return ""
+}
+
+func docxEntryExists(t *testing.T, path string, entryName string) bool {
+	t.Helper()
+	reader, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("open docx zip %s: %v", path, err)
+	}
+	defer reader.Close()
+
+	for _, file := range reader.File {
+		if file.Name == entryName {
+			return true
+		}
+	}
+	return false
 }

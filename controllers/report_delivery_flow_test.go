@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"bytes"
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +34,7 @@ func setupReportDeliveryFlowTest(t *testing.T) (*gorm.DB, *ReportController, *An
 		&models.TeamCoach{},
 		&models.Order{},
 		&models.Report{},
+		&models.ReportVersion{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -99,6 +101,94 @@ func TestDownloadReportFallsBackToMarkdownContent(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "在线球探报告正文") {
 		t.Fatalf("body = %q, want report content", w.Body.String())
+	}
+}
+
+func TestPlayerReportVersionsOnlyExposeApprovedVersions(t *testing.T) {
+	db, reportCtrl, _ := setupReportDeliveryFlowTest(t)
+
+	player := models.User{
+		Phone:    "13800000004",
+		Password: "test-password",
+		Name:     "版本球员",
+		Role:     models.RoleUser,
+		Status:   models.StatusActive,
+	}
+	if err := db.Create(&player).Error; err != nil {
+		t.Fatalf("create player: %v", err)
+	}
+
+	report := models.Report{
+		OrderID:        11,
+		UserID:         player.ID,
+		AnalystID:      88,
+		PlayerName:     "版本球员",
+		PlayerPosition: "边锋",
+		Content:        "正式报告正文",
+		Status:         models.ReportStatusCompleted,
+	}
+	if err := db.Create(&report).Error; err != nil {
+		t.Fatalf("create report: %v", err)
+	}
+
+	versions := []models.ReportVersion{
+		{
+			ReportID:      report.ID,
+			OrderID:       report.OrderID,
+			VersionNo:     1,
+			SourceType:    models.ReportVersionSourceAI,
+			Status:        models.ReportVersionStatusAIDraft,
+			Content:       "AI 草稿",
+			InputSnapshot: "内部输入快照",
+		},
+		{
+			ReportID:      report.ID,
+			OrderID:       report.OrderID,
+			VersionNo:     2,
+			SourceType:    models.ReportVersionSourceAdminReview,
+			Status:        models.ReportVersionStatusApproved,
+			Content:       "审核通过正文",
+			InputSnapshot: "内部输入快照",
+			ReviewRemark:  "内部审核备注",
+			WordURL:       "/uploads/reports/final.docx",
+		},
+	}
+	if err := db.Create(&versions).Error; err != nil {
+		t.Fatalf("create versions: %v", err)
+	}
+
+	router := gin.New()
+	router.GET("/reports/:id/versions", func(c *gin.Context) {
+		c.Set("userId", player.ID)
+		reportCtrl.GetReportVersions(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/reports/1/versions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Versions []models.ReportVersion `json:"versions"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Data.Versions) != 1 {
+		t.Fatalf("versions len = %d, want 1: %s", len(payload.Data.Versions), w.Body.String())
+	}
+	version := payload.Data.Versions[0]
+	if version.Status != models.ReportVersionStatusApproved {
+		t.Fatalf("version status = %s, want approved", version.Status)
+	}
+	if version.Content != "" || version.InputSnapshot != "" || version.ReviewRemark != "" {
+		t.Fatalf("player version exposed internal fields: %#v", version)
 	}
 }
 

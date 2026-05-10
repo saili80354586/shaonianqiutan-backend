@@ -56,6 +56,7 @@ func SetupVideoAnalysisRoutes(
 			analyst.POST("/generate-ai-report", vaController.GenerateAIReport)   // 触发AI生成
 			analyst.GET("/:id/ai-report", vaController.GetAIReport)              // 获取AI报告
 			analyst.PUT("/:id/ai-report", vaController.UpdateAIReport)           // 手动修改AI报告
+			analyst.POST("/:id/submit-report", vaController.ConfirmReport)       // 提交评分与文字评价生成报告
 			analyst.POST("/:id/confirm-ai-report", vaController.ConfirmAIReport) // 确认AI报告
 		}
 	}

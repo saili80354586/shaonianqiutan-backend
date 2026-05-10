@@ -588,6 +588,20 @@ func (ctrl *AnalystController) DownloadAIReport(c *gin.Context) {
 		}
 	} else {
 		if report.AIReportURL == "" && strings.TrimSpace(report.Content) != "" {
+			var analysis models.VideoAnalysis
+			if err := ctrl.db.Where("order_id = ?", order.ID).First(&analysis).Error; err == nil && analysis.ID > 0 {
+				switch analysis.AIReportStatus {
+				case "generating", "regenerating":
+					utils.Error(c, http.StatusConflict, "视频分析报告正在生成，请稍后再下载")
+					return
+				case "failed":
+					utils.Error(c, http.StatusConflict, "视频分析报告生成失败，请重新提交或联系管理员")
+					return
+				default:
+					utils.Error(c, http.StatusNotFound, "视频分析 Word 报告尚未生成")
+					return
+				}
+			}
 			fileName := fmt.Sprintf("AI分析报告_%s.md", order.OrderNo)
 			c.Header("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", fileName))
 			c.Header("Content-Type", "text/markdown; charset=utf-8")
@@ -709,6 +723,31 @@ func (ctrl *AnalystController) UploadAIReport(c *gin.Context) {
 	reportURL := "/uploads/reports/" + fileName
 	if err := ctrl.db.Model(&models.Report{}).Where("id = ?", report.ID).Update("ai_report_url", reportURL).Error; err != nil {
 		utils.Error(c, http.StatusInternalServerError, "更新报告失败")
+		return
+	}
+	var analysis models.VideoAnalysis
+	if ctrl.db.Migrator().HasTable(&models.VideoAnalysis{}) {
+		_ = ctrl.db.Where("order_id = ?", order.ID).First(&analysis).Error
+	}
+	if analysis.ID > 0 {
+		_ = ctrl.db.Model(&models.VideoAnalysis{}).Where("id = ?", analysis.ID).Update("ai_report_status", string(models.ReportVersionStatusAnalystSubmitted)).Error
+	}
+	if err := models.CreateReportVersion(ctrl.db, &models.ReportVersion{
+		ReportID:                report.ID,
+		OrderID:                 order.ID,
+		AnalysisID:              reportVersionAnalysisID(analysis.ID),
+		SourceType:              models.ReportVersionSourceAnalystWord,
+		Status:                  models.ReportVersionStatusAnalystSubmitted,
+		Content:                 report.Content,
+		WordURL:                 reportURL,
+		PDFURL:                  report.PdfURL,
+		InputSnapshot:           analysis.AIReportInputSnapshot,
+		TemplateVersion:         analysis.AIReportTemplateVersion,
+		DocumentTemplateVersion: services.VideoAnalysisDocumentTemplateVersion,
+		OriginalFileName:        file.Filename,
+		CreatedByRole:           "analyst",
+	}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "记录报告版本失败")
 		return
 	}
 

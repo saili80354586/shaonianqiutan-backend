@@ -3,6 +3,8 @@ package config
 import (
 	"log"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -18,9 +20,37 @@ const (
 
 // LoadEnv 加载环境变量
 func LoadEnv() {
-	err := godotenv.Load()
-	if err != nil {
+	candidates := []string{".env"}
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(wd, ".env"))
+	}
+	if _, file, _, ok := runtime.Caller(0); ok {
+		projectRoot := filepath.Dir(filepath.Dir(file))
+		candidates = append(candidates, filepath.Join(projectRoot, ".env"))
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), ".env"))
+	}
+
+	seen := make(map[string]bool, len(candidates))
+	existing := make([]string, 0, len(candidates))
+	for _, path := range candidates {
+		abs, err := filepath.Abs(path)
+		if err != nil || seen[abs] {
+			continue
+		}
+		seen[abs] = true
+		if _, statErr := os.Stat(abs); statErr == nil {
+			existing = append(existing, abs)
+		}
+	}
+
+	if len(existing) == 0 {
 		log.Println("Warning: No .env file found, using system environment variables")
+		return
+	}
+	if err := godotenv.Load(existing...); err != nil {
+		log.Printf("Warning: failed to load .env files: %v", err)
 	}
 }
 

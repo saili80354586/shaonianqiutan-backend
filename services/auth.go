@@ -470,6 +470,7 @@ func (s *AuthService) Register(req *RegisterRequest) (*LoginResponse, error) {
 			club := &models.Club{
 				UserID:          user.ID,
 				Name:            req.ClubName,
+				Logo:            avatarURL,
 				Address:         req.ClubAddress,
 				ContactName:     req.ContactName,
 				ContactPhone:    req.ClubContactPhone,

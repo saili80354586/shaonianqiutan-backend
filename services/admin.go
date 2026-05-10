@@ -66,6 +66,22 @@ func NewAdminService(
 	}
 }
 
+// GetDB exposes the shared database connection for controller-level audit writes.
+func (s *AdminService) GetDB() *gorm.DB {
+	if s == nil || s.orderRepo == nil {
+		return nil
+	}
+	return s.orderRepo.GetDB()
+}
+
+func reportVersionAnalysisIDForService(id uint) *uint {
+	if id == 0 {
+		return nil
+	}
+	value := id
+	return &value
+}
+
 // SetNotificationService 注入通知服务
 func (s *AdminService) SetNotificationService(notificationService *NotificationService) {
 	s.notificationService = notificationService
@@ -316,11 +332,40 @@ func (s *AdminService) ReviewReport(reportID uint, status models.ReportStatus, r
 			if s.videoAnalysisRepo != nil {
 				if err := tx.Model(&models.VideoAnalysis{}).Where("order_id = ?", report.OrderID).Updates(map[string]interface{}{
 					"status":           models.AnalysisStatusDraft,
-					"ai_report_status": "draft",
+					"ai_report_status": string(models.ReportVersionStatusAdminRejected),
 				}).Error; err != nil {
 					return err
 				}
 			}
+		}
+		versionStatus := models.ReportVersionStatusApproved
+		if status == models.ReportStatusFailed {
+			versionStatus = models.ReportVersionStatusAdminRejected
+		} else if status == models.ReportStatusProcessing {
+			versionStatus = models.ReportVersionStatusAnalystSubmitted
+		}
+		var analysis models.VideoAnalysis
+		if tx.Migrator().HasTable(&models.VideoAnalysis{}) {
+			_ = tx.Where("order_id = ?", report.OrderID).First(&analysis).Error
+		}
+		adminUserID := adminID
+		if err := models.CreateReportVersion(tx, &models.ReportVersion{
+			ReportID:                report.ID,
+			OrderID:                 report.OrderID,
+			AnalysisID:              reportVersionAnalysisIDForService(analysis.ID),
+			SourceType:              models.ReportVersionSourceAdminReview,
+			Status:                  versionStatus,
+			Content:                 report.Content,
+			WordURL:                 report.AIReportURL,
+			PDFURL:                  report.PdfURL,
+			InputSnapshot:           analysis.AIReportInputSnapshot,
+			TemplateVersion:         analysis.AIReportTemplateVersion,
+			DocumentTemplateVersion: VideoAnalysisDocumentTemplateVersion,
+			ReviewRemark:            remark,
+			CreatedByUserID:         &adminUserID,
+			CreatedByRole:           "admin",
+		}); err != nil {
+			return err
 		}
 		return nil
 	})

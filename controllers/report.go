@@ -21,6 +21,7 @@ import (
 type ReportController struct {
 	reportService *services.ReportService
 	authService   *services.AuthService
+	db            *gorm.DB
 	analysisRepo  *models.VideoAnalysisRepository
 	highlightRepo *models.AnalysisHighlightRepository
 }
@@ -31,6 +32,7 @@ func NewReportController(reportService *services.ReportService, authService *ser
 		authService:   authService,
 	}
 	if len(dbs) > 0 && dbs[0] != nil {
+		ctrl.db = dbs[0]
 		ctrl.analysisRepo = models.NewVideoAnalysisRepository(dbs[0])
 		ctrl.highlightRepo = models.NewAnalysisHighlightRepository(dbs[0])
 	}
@@ -132,6 +134,69 @@ func (ctrl *ReportController) GetReportDetail(c *gin.Context) {
 		VideoAnalysisID:  videoAnalysisID,
 		HighlightMarkers: highlightMarkers,
 	}})
+}
+
+// GetReportVersions 获取报告版本历史。
+func (ctrl *ReportController) GetReportVersions(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		utils.Error(c, http.StatusUnauthorized, "未认证")
+		return
+	}
+	if ctrl.db == nil {
+		utils.Error(c, http.StatusInternalServerError, "版本服务未初始化")
+		return
+	}
+
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的报告ID")
+		return
+	}
+
+	user, err := ctrl.authService.GetUserByID(userID)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取用户信息失败")
+		return
+	}
+
+	report, hasPermission, err := ctrl.reportService.GetReportDetail(uint(id), userID, user.Role)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取报告详情失败")
+		return
+	}
+	if report == nil {
+		utils.Error(c, http.StatusNotFound, "报告不存在")
+		return
+	}
+	if !hasPermission {
+		utils.Error(c, http.StatusForbidden, "无权限查看")
+		return
+	}
+
+	versions, err := models.FindReportVersionsByReportID(ctrl.db, report.ID)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取报告版本失败")
+		return
+	}
+	if user.Role == models.RoleUser {
+		approvedVersions := make([]models.ReportVersion, 0, len(versions))
+		for _, version := range versions {
+			if version.Status != models.ReportVersionStatusApproved {
+				continue
+			}
+			version.Content = ""
+			version.InputSnapshot = ""
+			version.ReviewRemark = ""
+			approvedVersions = append(approvedVersions, version)
+		}
+		versions = approvedVersions
+	}
+	utils.Success(c, "", gin.H{
+		"report_id": report.ID,
+		"versions":  versions,
+	})
 }
 
 func (ctrl *ReportController) getReportHighlightMarkers(report *models.Report, userRole models.UserRole) ([]reportHighlightMarker, uint) {
