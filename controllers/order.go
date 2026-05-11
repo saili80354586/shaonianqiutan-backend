@@ -105,6 +105,64 @@ func (ctrl *OrderController) SupplementOrder(c *gin.Context) {
 	utils.Success(c, "资料提交成功", gin.H{"order": order})
 }
 
+// CreateSourceVideoUploadIntent 生成订单源视频上传地址
+func (ctrl *OrderController) CreateSourceVideoUploadIntent(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		utils.Error(c, http.StatusUnauthorized, "未认证")
+		return
+	}
+
+	id, err := parseOrderID(c)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的订单ID")
+		return
+	}
+
+	var req services.CreateOrderSourceVideoUploadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	intent, err := ctrl.orderService.CreateOrderSourceVideoUploadIntent(userID, id, &req)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "生成上传地址失败: "+err.Error())
+		return
+	}
+
+	utils.Success(c, "上传地址已生成", gin.H{"upload": intent})
+}
+
+// ConfirmSourceVideoUpload 确认订单源视频已上传并绑定到订单
+func (ctrl *OrderController) ConfirmSourceVideoUpload(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		utils.Error(c, http.StatusUnauthorized, "未认证")
+		return
+	}
+
+	id, err := parseOrderID(c)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的订单ID")
+		return
+	}
+
+	var req services.ConfirmOrderSourceVideoRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	order, err := ctrl.orderService.ConfirmOrderSourceVideo(userID, id, &req)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "绑定视频失败: "+err.Error())
+		return
+	}
+
+	utils.Success(c, "视频已绑定", gin.H{"order": order})
+}
+
 // GetOrderDetail 获取订单详情
 func (ctrl *OrderController) GetOrderDetail(c *gin.Context) {
 	userID := middleware.GetUserID(c)
@@ -138,6 +196,15 @@ func (ctrl *OrderController) GetOrderDetail(c *gin.Context) {
 	}
 
 	utils.Success(c, "", gin.H{"order": order})
+}
+
+func parseOrderID(c *gin.Context) (uint, error) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	return uint(id), nil
 }
 
 // CancelOrder 取消订单

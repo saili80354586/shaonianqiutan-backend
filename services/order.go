@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -10,18 +11,24 @@ import (
 
 // OrderService 订单服务
 type OrderService struct {
-	orderRepo   *models.OrderRepository
-	analystRepo *models.AnalystRepository
-	reportRepo  *models.ReportRepository
-	userRepo    *models.UserRepository
+	orderRepo      *models.OrderRepository
+	analystRepo    *models.AnalystRepository
+	reportRepo     *models.ReportRepository
+	userRepo       *models.UserRepository
+	storageService *StorageService
 }
 
-func NewOrderService(orderRepo *models.OrderRepository, analystRepo *models.AnalystRepository, reportRepo *models.ReportRepository, userRepo *models.UserRepository) *OrderService {
+func NewOrderService(orderRepo *models.OrderRepository, analystRepo *models.AnalystRepository, reportRepo *models.ReportRepository, userRepo *models.UserRepository, storageService ...*StorageService) *OrderService {
+	var storage *StorageService
+	if len(storageService) > 0 {
+		storage = storageService[0]
+	}
 	return &OrderService{
-		orderRepo:   orderRepo,
-		analystRepo: analystRepo,
-		reportRepo:  reportRepo,
-		userRepo:    userRepo,
+		orderRepo:      orderRepo,
+		analystRepo:    analystRepo,
+		reportRepo:     reportRepo,
+		userRepo:       userRepo,
+		storageService: storage,
 	}
 }
 
@@ -64,6 +71,9 @@ type CreateOrderRequest struct {
 	PlayerAge      int                  `json:"player_age"`
 	PlayerPosition string               `json:"player_position"`
 	MatchName      string               `json:"match_name"`
+	MatchDate      string               `json:"match_date"`
+	Opponent       string               `json:"opponent"`
+	MatchResult    string               `json:"match_result"`
 	VideoDuration  int                  `json:"video_duration"`
 }
 
@@ -77,13 +87,44 @@ type SupplementOrderRequest struct {
 	JerseyColor    string `json:"jersey_color"`
 	JerseyNumber   string `json:"jersey_number"`
 	MatchName      string `json:"match_name"`
+	MatchDate      string `json:"match_date"`
+	Opponent       string `json:"opponent"`
+	MatchResult    string `json:"match_result"`
 	VideoDuration  int    `json:"video_duration"`
 	Remark         string `json:"remark"`
 }
 
+type CreateOrderSourceVideoUploadRequest struct {
+	Filename      string `json:"filename" binding:"required"`
+	ContentType   string `json:"content_type"`
+	Size          int64  `json:"size" binding:"required,gt=0"`
+	VideoDuration int    `json:"video_duration"`
+}
+
+type ConfirmOrderSourceVideoRequest struct {
+	StorageObjectID uint   `json:"storage_object_id" binding:"required"`
+	ObjectKey       string `json:"object_key" binding:"required"`
+	ETag            string `json:"etag"`
+	Size            int64  `json:"size"`
+	VideoDuration   int    `json:"video_duration"`
+	VideoFilename   string `json:"video_filename"`
+	PlayerName      string `json:"player_name"`
+	PlayerAge       int    `json:"player_age"`
+	PlayerPosition  string `json:"player_position"`
+	JerseyColor     string `json:"jersey_color"`
+	JerseyNumber    string `json:"jersey_number"`
+	MatchName       string `json:"match_name"`
+	MatchDate       string `json:"match_date"`
+	Opponent        string `json:"opponent"`
+	MatchResult     string `json:"match_result"`
+	Remark          string `json:"remark"`
+}
+
 // AssignOrderRequest 管理员派单请求
 type AssignOrderRequest struct {
-	AnalystID uint `json:"analyst_id" binding:"required"`
+	AnalystID uint       `json:"analyst_id" binding:"required"`
+	Deadline  *time.Time `json:"deadline"`
+	Note      string     `json:"note"`
 }
 
 // CreateOrder 创建订单
@@ -123,8 +164,10 @@ func (s *OrderService) CreateOrder(userID uint, req *CreateOrderRequest) (*model
 		PlayerAge:      req.PlayerAge,
 		PlayerPosition: req.PlayerPosition,
 		MatchName:      req.MatchName,
+		MatchDate:      req.MatchDate,
+		Opponent:       req.Opponent,
+		MatchResult:    req.MatchResult,
 		VideoDuration:  req.VideoDuration,
-		// 新增字段需要模型同步支持，若模型尚未扩展，先通过 map 更新或后续迁移
 	}
 
 	err := s.orderRepo.Create(order)
@@ -178,6 +221,9 @@ func (s *OrderService) SupplementOrder(userID, orderID uint, req *SupplementOrde
 		"jersey_color":    req.JerseyColor,
 		"jersey_number":   req.JerseyNumber,
 		"match_name":      req.MatchName,
+		"match_date":      req.MatchDate,
+		"opponent":        req.Opponent,
+		"match_result":    req.MatchResult,
 		"video_duration":  req.VideoDuration,
 		"remark":          req.Remark,
 		"status":          models.OrderStatusUploaded,
@@ -188,6 +234,130 @@ func (s *OrderService) SupplementOrder(userID, orderID uint, req *SupplementOrde
 	}
 
 	return s.orderRepo.FindByID(orderID)
+}
+
+func (s *OrderService) CreateOrderSourceVideoUploadIntent(userID, orderID uint, req *CreateOrderSourceVideoUploadRequest) (*UploadIntent, error) {
+	if s.storageService == nil {
+		return nil, errors.New("存储服务未初始化")
+	}
+	order, err := s.orderRepo.FindByID(orderID)
+	if err != nil {
+		return nil, err
+	}
+	if order == nil {
+		return nil, errors.New("订单不存在")
+	}
+	if order.UserID != userID {
+		return nil, errors.New("无权限操作此订单")
+	}
+	if !canBindSourceVideo(order.Status) {
+		return nil, errors.New("当前订单状态不允许上传视频")
+	}
+	return s.storageService.CreateOrderSourceUploadIntent(context.Background(), CreateOrderSourceUploadInput{
+		UserID:        userID,
+		OrderID:       orderID,
+		Filename:      req.Filename,
+		ContentType:   req.ContentType,
+		Size:          req.Size,
+		VideoDuration: req.VideoDuration,
+	})
+}
+
+func (s *OrderService) ConfirmOrderSourceVideo(userID, orderID uint, req *ConfirmOrderSourceVideoRequest) (*models.Order, error) {
+	if s.storageService == nil {
+		return nil, errors.New("存储服务未初始化")
+	}
+	order, err := s.orderRepo.FindByID(orderID)
+	if err != nil {
+		return nil, err
+	}
+	if order == nil {
+		return nil, errors.New("订单不存在")
+	}
+	if order.UserID != userID {
+		return nil, errors.New("无权限操作此订单")
+	}
+	if !canBindSourceVideo(order.Status) {
+		return nil, errors.New("当前订单状态不允许绑定视频")
+	}
+
+	object, err := s.storageService.ConfirmStorageObject(ConfirmStorageObjectInput{
+		StorageObjectID: req.StorageObjectID,
+		ObjectKey:       req.ObjectKey,
+		ETag:            req.ETag,
+		Size:            req.Size,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if object.OwnerType != models.StorageOwnerOrder || object.OwnerID != orderID || object.BusinessType != models.StorageBusinessOrderSourceVideo {
+		return nil, errors.New("存储对象不属于当前订单")
+	}
+
+	updates := map[string]interface{}{
+		"video_storage_object_id": object.ID,
+		"video_url":               s.storageService.PublicObjectURL(object),
+		"video_filename":          firstNonEmptyOrderText(req.VideoFilename, object.OriginalName),
+	}
+	if req.VideoDuration > 0 {
+		updates["video_duration"] = req.VideoDuration
+	}
+	if req.PlayerName != "" {
+		updates["player_name"] = req.PlayerName
+	}
+	if req.PlayerAge > 0 {
+		updates["player_age"] = req.PlayerAge
+	}
+	if req.PlayerPosition != "" {
+		updates["player_position"] = req.PlayerPosition
+	}
+	if req.JerseyColor != "" {
+		updates["jersey_color"] = req.JerseyColor
+	}
+	if req.JerseyNumber != "" {
+		updates["jersey_number"] = req.JerseyNumber
+	}
+	if req.MatchName != "" {
+		updates["match_name"] = req.MatchName
+	}
+	if req.MatchDate != "" {
+		updates["match_date"] = req.MatchDate
+	}
+	if req.Opponent != "" {
+		updates["opponent"] = req.Opponent
+	}
+	if req.MatchResult != "" {
+		updates["match_result"] = req.MatchResult
+	}
+	if req.Remark != "" {
+		updates["remark"] = req.Remark
+	}
+	if order.Status == models.OrderStatusPaid {
+		updates["status"] = models.OrderStatusUploaded
+	}
+	if err := s.orderRepo.Update(orderID, updates); err != nil {
+		return nil, err
+	}
+
+	return s.orderRepo.FindByID(orderID)
+}
+
+func canBindSourceVideo(status models.OrderStatus) bool {
+	switch status {
+	case models.OrderStatusPending, models.OrderStatusPaid, models.OrderStatusUploaded:
+		return true
+	default:
+		return false
+	}
+}
+
+func firstNonEmptyOrderText(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // AssignOrder 管理员派单给分析师
@@ -223,10 +393,10 @@ func (s *OrderService) AssignOrder(orderID, analystID uint) (*models.Order, erro
 	deadline := time.Now().Add(time.Duration(deadlineHours) * time.Hour)
 
 	updates := map[string]interface{}{
-		"analyst_id":   analystID,
-		"status":       models.OrderStatusAssigned,
-		"assigned_at":  time.Now(),
-		"deadline":     deadline,
+		"analyst_id":  analystID,
+		"status":      models.OrderStatusAssigned,
+		"assigned_at": time.Now(),
+		"deadline":    deadline,
 	}
 
 	if err := s.orderRepo.Update(orderID, updates); err != nil {

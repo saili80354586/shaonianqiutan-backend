@@ -19,14 +19,15 @@ import (
 const maxAnalysisClipDurationMs = 90 * 1000
 
 type VideoClipService struct {
-	db           *gorm.DB
-	outputDir    string
-	publicPrefix string
-	baseURL      string
-	ffmpegPath   string
+	db             *gorm.DB
+	outputDir      string
+	publicPrefix   string
+	baseURL        string
+	ffmpegPath     string
+	storageService *StorageService
 }
 
-func NewVideoClipService(db *gorm.DB) *VideoClipService {
+func NewVideoClipService(db *gorm.DB, storageService ...*StorageService) *VideoClipService {
 	outputDir := strings.TrimSpace(os.Getenv("VIDEO_CLIP_OUTPUT_DIR"))
 	if outputDir == "" {
 		outputDir = "./uploads/video-clips"
@@ -48,12 +49,18 @@ func NewVideoClipService(db *gorm.DB) *VideoClipService {
 		}
 	}
 
+	var storage *StorageService
+	if len(storageService) > 0 {
+		storage = storageService[0]
+	}
+
 	return &VideoClipService{
-		db:           db,
-		outputDir:    outputDir,
-		publicPrefix: "/uploads/video-clips",
-		baseURL:      baseURL,
-		ffmpegPath:   ffmpegPath,
+		db:             db,
+		outputDir:      outputDir,
+		publicPrefix:   "/uploads/video-clips",
+		baseURL:        baseURL,
+		ffmpegPath:     ffmpegPath,
+		storageService: storage,
 	}
 }
 
@@ -68,7 +75,7 @@ func (s *VideoClipService) QueueHighlightClip(highlightID uint) (*models.Analysi
 	if err := validateClipRange(highlight); err != nil {
 		return s.markClipFailed(highlightID, err.Error())
 	}
-	if _, err := s.resolveSourceInput(analysis.VideoURL); err != nil {
+	if err := s.sourceInputAvailable(analysis.VideoURL); err != nil {
 		return s.markClipFailed(highlightID, err.Error())
 	}
 
@@ -94,11 +101,12 @@ func (s *VideoClipService) ProcessHighlightClip(highlightID uint) {
 		_, _ = s.markClipFailed(highlightID, err.Error())
 		return
 	}
-	source, err := s.resolveSourceInput(analysis.VideoURL)
+	source, cleanupSource, err := s.resolveSourceInput(analysis.VideoURL)
 	if err != nil {
 		_, _ = s.markClipFailed(highlightID, err.Error())
 		return
 	}
+	defer cleanupSource()
 	if s.ffmpegPath == "" {
 		_, _ = s.markClipFailed(highlightID, "视频处理工具 ffmpeg 未安装或未配置")
 		return
@@ -146,6 +154,21 @@ func (s *VideoClipService) ProcessHighlightClip(highlightID uint) {
 
 	now := time.Now()
 	clipURL := strings.TrimRight(s.baseURL, "/") + s.publicPrefix + "/" + filename
+	if s.storageService != nil {
+		if uploadedURL, _, err := s.storageService.UploadAnalysisClip(context.Background(), UploadAnalysisClipInput{
+			OrderID:     analysis.OrderID,
+			AnalysisID:  analysis.ID,
+			HighlightID: highlight.ID,
+			Version:     version,
+			LocalPath:   outputPath,
+			ContentType: "video/mp4",
+		}); err == nil && strings.TrimSpace(uploadedURL) != "" {
+			clipURL = uploadedURL
+		} else if err != nil {
+			_, _ = s.markClipFailed(highlightID, truncateClipError("上传剪辑到对象存储失败: "+err.Error()))
+			return
+		}
+	}
 	_ = s.db.Model(&models.AnalysisHighlight{}).Where("id = ?", highlightID).Updates(map[string]interface{}{
 		"clip_status":       models.HighlightClipReady,
 		"clip_error":        "",
@@ -177,6 +200,11 @@ func (s *VideoClipService) FindHighlight(highlightID uint) (*models.AnalysisHigh
 func (s *VideoClipService) ResolveClipFilePath(clipURL string) (string, error) {
 	if strings.TrimSpace(clipURL) == "" {
 		return "", errors.New("片段文件不存在")
+	}
+	if s.storageService != nil {
+		if objectKey, ok := s.storageService.ObjectKeyFromURL(clipURL); ok {
+			return s.storageService.DownloadObjectToTemp(context.Background(), objectKey)
+		}
 	}
 	parsed, err := url.Parse(clipURL)
 	pathValue := clipURL
@@ -217,10 +245,36 @@ func (s *VideoClipService) markClipFailed(highlightID uint, message string) (*mo
 	return s.FindHighlight(highlightID)
 }
 
-func (s *VideoClipService) resolveSourceInput(rawURL string) (string, error) {
+func (s *VideoClipService) sourceInputAvailable(rawURL string) error {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
-		return "", errors.New("源视频不存在")
+		return errors.New("源视频不存在")
+	}
+	if s.storageService != nil {
+		if _, ok := s.storageService.ObjectKeyFromURL(rawURL); ok {
+			return nil
+		}
+	}
+	_, cleanup, err := s.resolveSourceInput(rawURL)
+	if cleanup != nil {
+		cleanup()
+	}
+	return err
+}
+
+func (s *VideoClipService) resolveSourceInput(rawURL string) (string, func(), error) {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return "", func() {}, errors.New("源视频不存在")
+	}
+	if s.storageService != nil {
+		if objectKey, ok := s.storageService.ObjectKeyFromURL(rawURL); ok {
+			localPath, err := s.storageService.DownloadObjectToTemp(context.Background(), objectKey)
+			if err != nil {
+				return "", func() {}, errors.New("源视频文件不存在")
+			}
+			return localPath, func() { _ = os.Remove(localPath) }, nil
+		}
 	}
 
 	parsed, err := url.Parse(rawURL)
@@ -230,18 +284,18 @@ func (s *VideoClipService) resolveSourceInput(rawURL string) (string, error) {
 			if strings.HasPrefix(parsed.Path, "/uploads/") {
 				localPath := filepath.Clean(strings.TrimPrefix(parsed.Path, "/"))
 				if _, err := os.Stat(localPath); err != nil {
-					return "", errors.New("源视频文件不存在")
+					return "", func() {}, errors.New("源视频文件不存在")
 				}
-				return localPath, nil
+				return localPath, func() {}, nil
 			}
-			return rawURL, nil
+			return rawURL, func() {}, nil
 		case "file":
 			if _, err := os.Stat(parsed.Path); err != nil {
-				return "", errors.New("源视频文件不存在")
+				return "", func() {}, errors.New("源视频文件不存在")
 			}
-			return parsed.Path, nil
+			return parsed.Path, func() {}, nil
 		default:
-			return "", errors.New("源视频地址格式不支持")
+			return "", func() {}, errors.New("源视频地址格式不支持")
 		}
 	}
 
@@ -250,9 +304,9 @@ func (s *VideoClipService) resolveSourceInput(rawURL string) (string, error) {
 		localPath = filepath.Clean(strings.TrimPrefix(rawURL, "/"))
 	}
 	if _, err := os.Stat(localPath); err != nil {
-		return "", errors.New("源视频文件不存在")
+		return "", func() {}, errors.New("源视频文件不存在")
 	}
-	return localPath, nil
+	return localPath, func() {}, nil
 }
 
 func validateClipRange(highlight *models.AnalysisHighlight) error {

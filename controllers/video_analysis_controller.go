@@ -54,6 +54,10 @@ func (ctrl *VideoAnalysisController) SetNotificationService(notificationService 
 	ctrl.notificationService = notificationService
 }
 
+func (ctrl *VideoAnalysisController) SetStorageService(storageService *services.StorageService) {
+	ctrl.clipService = services.NewVideoClipService(ctrl.db, storageService)
+}
+
 func getAnalystIDFromContext(c *gin.Context) (uint, bool) {
 	analystIDValue, exists := c.Get("analystId")
 	if !exists {
@@ -2656,7 +2660,9 @@ func (ctrl *VideoAnalysisController) CreateFromOrder(c *gin.Context) {
 		PlayerAge:      order.PlayerAge,
 		PlayerPosition: order.PlayerPosition,
 		MatchName:      order.MatchName,
+		MatchDate:      order.MatchDate,
 		Opponent:       order.Opponent,
+		PlayTime:       order.VideoDuration / 60,
 		VideoURL:       order.VideoURL,
 		Status:         models.AnalysisStatusScoring,
 	}

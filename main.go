@@ -53,6 +53,7 @@ func main() {
 		&models.Order{},
 		&models.OrderAssignment{},
 		&models.OrderStatusHistory{},
+		&models.StorageObject{},
 		&models.Analyst{},
 		&models.AnalystApplication{},
 		&models.UserRoleRecord{},
@@ -219,6 +220,7 @@ func main() {
 		userRepo := models.NewUserRepository(db)
 		orderRepo := models.NewOrderRepository(db)
 		reportRepo := models.NewReportRepository(db)
+		storageObjectRepo := models.NewStorageObjectRepository(db)
 		analystRepo := models.NewAnalystRepository(db)
 		assignmentRepo := models.NewOrderAssignmentRepository(db)
 		statusHistoryRepo := models.NewOrderStatusHistoryRepository(db)
@@ -245,7 +247,8 @@ func main() {
 		// ========== Service 初始化 ==========
 		smsService := services.NewSmsService(smsCodeRepo)
 		authService := services.NewAuthService(userRepo, analystRepo, orderRepo, assignmentRepo, statusHistoryRepo, smsService, db)
-		orderService := services.NewOrderService(orderRepo, analystRepo, reportRepo, userRepo)
+		storageService := services.NewStorageService(storageObjectRepo)
+		orderService := services.NewOrderService(orderRepo, analystRepo, reportRepo, userRepo, storageService)
 		reportService := services.NewReportService(reportRepo, userRepo)
 		analystService := services.NewAnalystService(analystRepo, orderRepo, userRepo, assignmentRepo, statusHistoryRepo)
 		clubService := services.NewClubService(db)
@@ -299,6 +302,7 @@ func main() {
 		// AI服务 + 视频分析控制器
 		aiService := services.NewAIService(services.DefaultAIConfig)
 		videoAnalysisController := controllers.NewVideoAnalysisController(db, aiService)
+		videoAnalysisController.SetStorageService(storageService)
 		videoAnalysisController.SetNotificationService(notificationService)
 
 		// ========== 设置路由 ==========

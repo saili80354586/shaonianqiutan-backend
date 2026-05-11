@@ -51,8 +51,9 @@ type Order struct {
 	PaymentTime   *time.Time    `json:"payment_time"`
 
 	// 视频相关字段
-	VideoURL      string `json:"video_url" gorm:"size:500"`
-	VideoFilename string `json:"video_filename" gorm:"size:255"`
+	VideoURL             string `json:"video_url" gorm:"size:500"`
+	VideoFilename        string `json:"video_filename" gorm:"size:255"`
+	VideoStorageObjectID *uint  `json:"video_storage_object_id" gorm:"index"`
 
 	// 报告关联
 	ReportID *uint   `json:"report_id" gorm:"index"`
@@ -73,7 +74,9 @@ type Order struct {
 	JerseyColor    string     `json:"jersey_color" gorm:"size:50"`
 	JerseyNumber   string     `json:"jersey_number" gorm:"size:10"`
 	MatchName      string     `json:"match_name" gorm:"size:100"`
+	MatchDate      string     `json:"match_date" gorm:"size:10"`
 	Opponent       string     `json:"opponent" gorm:"size:100"`
+	MatchResult    string     `json:"match_result" gorm:"size:100"`
 	VideoDuration  int        `json:"video_duration"`                // 秒
 	Deadline       *time.Time `json:"deadline"`                      // 分析师截止提交时间
 	AssignedAt     *time.Time `json:"assigned_at"`                   // 管理员派发时间

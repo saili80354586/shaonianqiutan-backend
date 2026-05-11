@@ -24,6 +24,8 @@ func SetupOrderRoutes(r *gin.RouterGroup, orderController *controllers.OrderCont
 
 		// 支付后补充订单信息（上传视频和球员资料）
 		order.POST("/:id/supplement", orderController.SupplementOrder)
+		order.POST("/:id/source-video/upload-url", orderController.CreateSourceVideoUploadIntent)
+		order.POST("/:id/source-video/confirm", orderController.ConfirmSourceVideoUpload)
 
 		// 更新订单状态
 		order.PUT("/:id/status", orderController.UpdateOrderStatus)
