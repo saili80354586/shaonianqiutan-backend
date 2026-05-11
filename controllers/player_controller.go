@@ -127,6 +127,7 @@ func (ctrl *PlayerController) GetProfile(c *gin.Context) {
 	technicalTags := parseJSONArray(user.TechnicalTags)
 	mentalTags := parseJSONArray(user.MentalTags)
 	experiences := parseExperiences(user.Experiences)
+	age := effectivePlayerAge(user.Age, user.BirthDate)
 
 	response := PlayerProfileResponse{
 		ID:                  user.ID,
@@ -134,7 +135,7 @@ func (ctrl *PlayerController) GetProfile(c *gin.Context) {
 		RealName:            user.Name,
 		BirthDate:           user.BirthDate,
 		Gender:              user.Gender,
-		Age:                 user.Age,
+		Age:                 age,
 		Avatar:              user.Avatar,
 		Position:            user.Position,
 		SecondPosition:      user.SecondPosition,
@@ -224,6 +225,9 @@ func (ctrl *PlayerController) UpdateProfile(c *gin.Context) {
 	addStringField(updates, "avatar", req.Avatar)
 	addStringField(updates, "name", req.Name)
 	addStringField(updates, "birth_date", req.BirthDate)
+	if req.BirthDate != nil {
+		updates["age"] = calculatePlayerAgeFromBirthDate(*req.BirthDate)
+	}
 	addStringField(updates, "gender", req.Gender)
 	addFloatField(updates, "height", req.Height)
 	addFloatField(updates, "weight", req.Weight)
@@ -684,12 +688,13 @@ func (ctrl *PlayerController) GetPlayerPublicProfile(c *gin.Context) {
 		}
 	}
 
+	age := effectivePlayerAge(user.Age, user.BirthDate)
 	response := gin.H{
 		"id":                   user.ID,
 		"nickname":             user.Nickname,
 		"real_name":            user.Name,
 		"avatar":               user.Avatar,
-		"age":                  user.Age,
+		"age":                  age,
 		"gender":               user.Gender,
 		"position":             user.Position,
 		"second_position":      user.SecondPosition,
@@ -758,6 +763,7 @@ func (ctrl *PlayerController) GetHomepage(c *gin.Context) {
 	followersCount, followingCount, isFollowing, isMutual := ctrl.getHomepageSocial(playerID, currentUser)
 	actions := ctrl.getHomepageActions(currentUser, playerID)
 	timeline := ctrl.buildHomepageTimeline(physicalRecords, weeklyReports, matches, reportList, scoutReports, posts)
+	age := effectivePlayerAge(user.Age, user.BirthDate)
 
 	showSchool := isOwnProfile
 	showReportDetails := isOwnProfile || currentUser != nil
@@ -773,8 +779,8 @@ func (ctrl *PlayerController) GetHomepage(c *gin.Context) {
 				return ""
 			}(),
 			"avatar":         user.Avatar,
-			"age":            user.Age,
-			"ageGroup":       firstNonEmpty(affiliation["ageGroup"], getHomepageAgeGroup(user.Age)),
+			"age":            age,
+			"ageGroup":       firstNonEmpty(affiliation["ageGroup"], getHomepageAgeGroup(age)),
 			"gender":         user.Gender,
 			"position":       user.Position,
 			"secondPosition": user.SecondPosition,
@@ -1647,6 +1653,41 @@ func getHomepageAgeGroup(age int) string {
 		return "U16"
 	}
 	return "U18"
+}
+
+func calculatePlayerAgeFromBirthDate(birthDate string) int {
+	birthDate = strings.TrimSpace(birthDate)
+	if birthDate == "" {
+		return 0
+	}
+	layouts := []string{"2006-01-02", "2006/01/02", "01-02-2006"}
+	var parsed time.Time
+	for _, layout := range layouts {
+		t, err := time.Parse(layout, birthDate)
+		if err == nil {
+			parsed = t
+			break
+		}
+	}
+	if parsed.IsZero() {
+		return 0
+	}
+	now := time.Now()
+	age := now.Year() - parsed.Year()
+	if now.Month() < parsed.Month() || (now.Month() == parsed.Month() && now.Day() < parsed.Day()) {
+		age--
+	}
+	if age < 0 {
+		return 0
+	}
+	return age
+}
+
+func effectivePlayerAge(age int, birthDate string) int {
+	if age > 0 {
+		return age
+	}
+	return calculatePlayerAgeFromBirthDate(birthDate)
 }
 
 func homepageAverageInts(values ...int) float64 {

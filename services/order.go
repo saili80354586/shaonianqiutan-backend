@@ -52,8 +52,11 @@ func calculateAgeFromBirthDate(birthDate string) int {
 	}
 	now := time.Now()
 	age := now.Year() - t.Year()
-	if now.YearDay() < t.YearDay() {
+	if now.Month() < t.Month() || (now.Month() == t.Month() && now.Day() < t.Day()) {
 		age--
+	}
+	if age < 0 {
+		return 0
 	}
 	return age
 }

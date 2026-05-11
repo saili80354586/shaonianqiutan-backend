@@ -388,6 +388,11 @@ func (s *AuthService) Register(req *RegisterRequest) (*LoginResponse, error) {
 		}
 	}
 
+	age := req.Age
+	if age <= 0 {
+		age = calculateAgeFromBirthDate(req.BirthDate)
+	}
+
 	// 创建用户
 	user := &models.User{
 		Phone:          req.Phone,
@@ -397,7 +402,7 @@ func (s *AuthService) Register(req *RegisterRequest) (*LoginResponse, error) {
 		Name:           req.Name,
 		Nickname:       req.Nickname,
 		BirthDate:      req.BirthDate,
-		Age:            req.Age,
+		Age:            age,
 		Gender:         req.Gender,
 		Height:         req.Height,
 		Weight:         req.Weight,
@@ -698,7 +703,9 @@ func (s *AuthService) ensureAnalystDefaultDemoOrder(tx *gorm.DB, userID uint) er
 		JerseyColor:    templateOrder.JerseyColor,
 		JerseyNumber:   templateOrder.JerseyNumber,
 		MatchName:      templateOrder.MatchName,
+		MatchDate:      templateOrder.MatchDate,
 		Opponent:       templateOrder.Opponent,
+		MatchResult:    templateOrder.MatchResult,
 		VideoDuration:  templateOrder.VideoDuration,
 		Deadline:       &deadline,
 		AssignedAt:     &assignedAt,
@@ -954,8 +961,8 @@ func (s *AuthService) UpdateUser(id uint, req *UpdateUserRequest) (*models.User,
 	}
 	if req.BirthDate != nil {
 		updates["birth_date"] = *req.BirthDate
-	}
-	if req.Age != nil {
+		updates["age"] = calculateAgeFromBirthDate(*req.BirthDate)
+	} else if req.Age != nil {
 		updates["age"] = *req.Age
 	}
 	if req.Gender != nil {

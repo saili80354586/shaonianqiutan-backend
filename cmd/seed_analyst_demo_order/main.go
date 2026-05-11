@@ -23,6 +23,9 @@ func main() {
 	playerName := strings.TrimSpace(os.Getenv("DEMO_PLAYER_NAME"))
 	playerBirthDate := strings.TrimSpace(os.Getenv("DEMO_PLAYER_BIRTH_DATE"))
 	matchName := strings.TrimSpace(os.Getenv("DEMO_MATCH_NAME"))
+	matchDate := strings.TrimSpace(os.Getenv("DEMO_MATCH_DATE"))
+	opponent := strings.TrimSpace(os.Getenv("DEMO_OPPONENT"))
+	matchResult := strings.TrimSpace(os.Getenv("DEMO_MATCH_RESULT"))
 	playerPosition := strings.TrimSpace(os.Getenv("DEMO_PLAYER_POSITION"))
 	jerseyColor := strings.TrimSpace(os.Getenv("DEMO_JERSEY_COLOR"))
 	jerseyNumber := strings.TrimSpace(os.Getenv("DEMO_JERSEY_NUMBER"))
@@ -95,6 +98,9 @@ func main() {
 		JerseyColor:    jerseyColor,
 		JerseyNumber:   jerseyNumber,
 		MatchName:      matchName,
+		MatchDate:      matchDate,
+		Opponent:       opponent,
+		MatchResult:    matchResult,
 		VideoDuration:  duration,
 	}
 
