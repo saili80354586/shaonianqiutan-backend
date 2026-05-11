@@ -15,6 +15,7 @@ import (
 	"github.com/shaonianqiutan/backend/models"
 	"github.com/shaonianqiutan/backend/services"
 	"github.com/shaonianqiutan/backend/utils"
+	"gorm.io/gorm"
 )
 
 // AdminController 管理后台控制器
@@ -300,14 +301,21 @@ func (ctrl *AdminController) GetAllOrders(c *gin.Context) {
 	pageSize := pagination.PageSize
 	status := c.DefaultQuery("status", "")
 
-	orders, total, err := ctrl.adminService.GetAllOrders(page, pageSize, status)
+	var list interface{}
+	var total int64
+	var err error
+	if c.Query("include_progress") == "true" {
+		list, total, err = ctrl.adminService.GetAllOrdersWithProgress(page, pageSize, status)
+	} else {
+		list, total, err = ctrl.adminService.GetAllOrders(page, pageSize, status)
+	}
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "获取订单列表失败")
 		return
 	}
 
 	utils.Success(c, "", gin.H{
-		"list":     orders,
+		"list":     list,
 		"total":    total,
 		"page":     page,
 		"pageSize": pageSize,
@@ -353,6 +361,106 @@ func (ctrl *AdminController) GetOrderStatusHistory(c *gin.Context) {
 	utils.Success(c, "", gin.H{
 		"list": histories,
 	})
+}
+
+// GetOrderAnalysisProgress 获取单个订单的分析师分析进度详情
+func (ctrl *AdminController) GetOrderAnalysisProgress(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的订单ID")
+		return
+	}
+
+	detail, err := ctrl.adminService.GetOrderAnalysisProgressDetail(uint(id))
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.Error(c, http.StatusNotFound, "订单不存在")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "获取分析进度失败")
+		return
+	}
+
+	utils.Success(c, "", detail)
+}
+
+type OrderProgressReminderRequest struct {
+	Message string `json:"message"`
+}
+
+// SendOrderProgressReminder 管理员催办订单分析进度
+func (ctrl *AdminController) SendOrderProgressReminder(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的订单ID")
+		return
+	}
+	var req OrderProgressReminderRequest
+	_ = c.ShouldBindJSON(&req)
+	if err := ctrl.adminService.SendOrderProgressReminder(uint(id), c.GetUint("userId"), req.Message); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.Error(c, http.StatusNotFound, "订单不存在")
+			return
+		}
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctrl.writeAuditLog(c, "send_order_progress_reminder", "order", uint(id), "管理员催办订单分析进度")
+	utils.Success(c, "已发送催办提醒", nil)
+}
+
+type OrderProgressExceptionRequest struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// MarkOrderProgressException 管理员标记订单分析异常
+func (ctrl *AdminController) MarkOrderProgressException(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的订单ID")
+		return
+	}
+	var req OrderProgressExceptionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := ctrl.adminService.MarkOrderProgressException(uint(id), c.GetUint("userId"), req.Code, req.Message); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.Error(c, http.StatusNotFound, "订单不存在")
+			return
+		}
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctrl.writeAuditLog(c, "mark_order_progress_exception", "order", uint(id), "管理员标记订单分析异常："+req.Message)
+	utils.Success(c, "已标记异常", nil)
+}
+
+// ResolveOrderProgressException 管理员解除订单分析异常
+func (ctrl *AdminController) ResolveOrderProgressException(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的订单ID")
+		return
+	}
+	var req OrderProgressExceptionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := ctrl.adminService.ResolveOrderProgressException(uint(id), c.GetUint("userId"), req.Code, req.Message); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.Error(c, http.StatusNotFound, "订单不存在")
+			return
+		}
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctrl.writeAuditLog(c, "resolve_order_progress_exception", "order", uint(id), "管理员解除订单分析异常："+req.Code)
+	utils.Success(c, "已解除异常", nil)
 }
 
 // GetPendingReports 获取待审核报告列表

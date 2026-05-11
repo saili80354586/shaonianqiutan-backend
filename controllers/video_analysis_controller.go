@@ -471,6 +471,220 @@ func (ctrl *VideoAnalysisController) appendReportVersion(version *models.ReportV
 	}
 }
 
+func (ctrl *VideoAnalysisController) recordAnalysisOperationEvent(event *models.AnalysisOperationEvent) {
+	if ctrl == nil || ctrl.db == nil || event == nil {
+		return
+	}
+	if err := models.NewAnalysisOperationEventRepository(ctrl.db).Create(event); err != nil {
+		log.Printf("[AnalysisOperationEvent] create failed: %v", err)
+	}
+}
+
+func operationEventMetadata(payload map[string]interface{}) string {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func controllerRuneCount(value string) int {
+	return len([]rune(strings.TrimSpace(value)))
+}
+
+func shortOperationText(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 || len([]rune(value)) <= limit {
+		return value
+	}
+	return string([]rune(value)[:limit])
+}
+
+func highlightOperationSummary(highlight *models.AnalysisHighlight) string {
+	if highlight == nil {
+		return ""
+	}
+	parts := nonEmptyAIReportStrings(
+		highlight.Timestamp,
+		string(highlight.MarkerType),
+		string(highlight.TagType),
+		shortOperationText(highlight.Description, 50),
+	)
+	return strings.Join(parts, " / ")
+}
+
+func (ctrl *VideoAnalysisController) recordHighlightOperationEvent(analysis *models.VideoAnalysis, highlight *models.AnalysisHighlight, eventType, label, beforeSummary, afterSummary string) {
+	if analysis == nil || highlight == nil {
+		return
+	}
+	ctrl.recordAnalysisOperationEvent(&models.AnalysisOperationEvent{
+		OrderID:       analysis.OrderID,
+		AnalysisID:    analysis.ID,
+		AnalystID:     analysis.AnalystID,
+		EventType:     eventType,
+		Section:       "highlight",
+		FieldKey:      fmt.Sprintf("highlight_%d", highlight.ID),
+		FieldLabel:    label,
+		BeforeSummary: beforeSummary,
+		AfterSummary:  afterSummary,
+		Metadata: operationEventMetadata(map[string]interface{}{
+			"highlight_id":      highlight.ID,
+			"timestamp":         highlight.Timestamp,
+			"marker_type":       highlight.MarkerType,
+			"mode":              highlight.Mode,
+			"start_time_ms":     highlight.StartTimeMs,
+			"end_time_ms":       highlight.EndTimeMs,
+			"tag_type":          highlight.TagType,
+			"include_in_report": highlight.IncludeInReport,
+			"clip_status":       highlight.ClipStatus,
+			"clip_version":      highlight.ClipVersion,
+		}),
+		CreatedAt: time.Now(),
+	})
+}
+
+func (ctrl *VideoAnalysisController) recordClipExportOperationEvent(analysis *models.VideoAnalysis, eventType, label, summary string, metadata map[string]interface{}) {
+	if analysis == nil {
+		return
+	}
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	ctrl.recordAnalysisOperationEvent(&models.AnalysisOperationEvent{
+		OrderID:      analysis.OrderID,
+		AnalysisID:   analysis.ID,
+		AnalystID:    analysis.AnalystID,
+		EventType:    eventType,
+		Section:      "clip_export",
+		FieldKey:     "highlight_clips_export",
+		FieldLabel:   label,
+		AfterSummary: summary,
+		Metadata:     operationEventMetadata(metadata),
+		CreatedAt:    time.Now(),
+	})
+}
+
+func (ctrl *VideoAnalysisController) recordAIReportOperationEvent(analysis *models.VideoAnalysis, eventType, label, summary string, version int, metadata map[string]interface{}) {
+	if analysis == nil {
+		return
+	}
+	if version <= 0 {
+		version = analysis.AIReportVersion
+	}
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadata["ai_report_version"] = version
+	metadata["ai_report_status"] = analysis.AIReportStatus
+	metadata["template_version"] = services.VideoAnalysisReportTemplateVersion
+	ctrl.recordAnalysisOperationEvent(&models.AnalysisOperationEvent{
+		OrderID:      analysis.OrderID,
+		AnalysisID:   analysis.ID,
+		AnalystID:    analysis.AnalystID,
+		EventType:    eventType,
+		Section:      "ai_report",
+		FieldKey:     "ai_report",
+		FieldLabel:   label,
+		AfterSummary: summary,
+		Metadata:     operationEventMetadata(metadata),
+		CreatedAt:    time.Now(),
+	})
+}
+
+func scoreDimensionMap(scores *models.VideoAnalysisScores) map[string]models.ScoreDimensionDetail {
+	result := map[string]models.ScoreDimensionDetail{}
+	for _, detail := range models.ScoreDimensionDetails(scores) {
+		result[detail.FieldKey] = detail
+	}
+	return result
+}
+
+func (ctrl *VideoAnalysisController) recordScoreUpdateEvents(analysis *models.VideoAnalysis, req UpdateScoresRequest, overallScore float64, potentialLevel models.PotentialLevel) {
+	if analysis == nil || req.Scores == nil {
+		return
+	}
+	now := time.Now()
+	ctrl.recordAnalysisOperationEvent(&models.AnalysisOperationEvent{
+		OrderID:      analysis.OrderID,
+		AnalysisID:   analysis.ID,
+		AnalystID:    analysis.AnalystID,
+		EventType:    "score_saved",
+		Section:      "score",
+		AfterSummary: fmt.Sprintf("保存评分草稿，综合评分 %.1f，潜力等级 %s", overallScore, potentialLevel),
+		Metadata: operationEventMetadata(map[string]interface{}{
+			"overall_score":   overallScore,
+			"potential_level": potentialLevel,
+		}),
+		CreatedAt: now,
+	})
+
+	previousScores, _ := models.ParseScoresFromJSON(analysis.Scores)
+	beforeMap := scoreDimensionMap(previousScores)
+	afterMap := scoreDimensionMap(req.Scores)
+	for _, meta := range models.ScoreDimensionMetas() {
+		before := beforeMap[meta.FieldKey]
+		after := afterMap[meta.FieldKey]
+		if before.Score == after.Score && strings.TrimSpace(before.Comment) == strings.TrimSpace(after.Comment) {
+			continue
+		}
+		beforeWords := controllerRuneCount(before.Comment)
+		afterWords := controllerRuneCount(after.Comment)
+		ctrl.recordAnalysisOperationEvent(&models.AnalysisOperationEvent{
+			OrderID:       analysis.OrderID,
+			AnalysisID:    analysis.ID,
+			AnalystID:     analysis.AnalystID,
+			EventType:     "score_dimension_updated",
+			Section:       "score",
+			FieldKey:      meta.FieldKey,
+			FieldLabel:    meta.FieldLabel,
+			BeforeSummary: fmt.Sprintf("分数 %.1f，评语 %d 字", before.Score, beforeWords),
+			AfterSummary:  fmt.Sprintf("分数 %.1f，评语 %d 字", after.Score, afterWords),
+			Metadata: operationEventMetadata(map[string]interface{}{
+				"before_score":         before.Score,
+				"after_score":          after.Score,
+				"before_comment_words": beforeWords,
+				"after_comment_words":  afterWords,
+			}),
+			CreatedAt: now,
+		})
+	}
+
+	textSections := []struct {
+		key    string
+		label  string
+		before string
+		after  string
+	}{
+		{key: "summary", label: "综合评价", before: analysis.Summary, after: req.Summary},
+		{key: "strengths", label: "核心优势", before: analysis.Strengths, after: req.Strengths},
+		{key: "weaknesses", label: "待提升点", before: analysis.Weaknesses, after: req.Weaknesses},
+		{key: "improvements", label: "训练建议", before: analysis.Improvements, after: req.Improvements},
+		{key: "analyst_notes", label: "分析师补充说明", before: analysis.AnalystNotes, after: req.AnalystNotes},
+	}
+	for _, section := range textSections {
+		if strings.TrimSpace(section.before) == strings.TrimSpace(section.after) {
+			continue
+		}
+		afterWords := controllerRuneCount(section.after)
+		ctrl.recordAnalysisOperationEvent(&models.AnalysisOperationEvent{
+			OrderID:       analysis.OrderID,
+			AnalysisID:    analysis.ID,
+			AnalystID:     analysis.AnalystID,
+			EventType:     "text_section_updated",
+			Section:       "text",
+			FieldKey:      section.key,
+			FieldLabel:    section.label,
+			BeforeSummary: fmt.Sprintf("%d 字", controllerRuneCount(section.before)),
+			AfterSummary:  fmt.Sprintf("%s，%d 字：%s", section.label, afterWords, shortOperationText(section.after, 60)),
+			Metadata: operationEventMetadata(map[string]interface{}{
+				"before_words": controllerRuneCount(section.before),
+				"after_words":  afterWords,
+			}),
+			CreatedAt: now,
+		})
+	}
+}
+
 func stringValue(value interface{}) string {
 	if text, ok := value.(string); ok {
 		return text
@@ -716,6 +930,7 @@ func (ctrl *VideoAnalysisController) UpdateScores(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "保存评分失败")
 		return
 	}
+	ctrl.recordScoreUpdateEvents(analysis, req, overallScore, potentialLevel)
 
 	utils.Success(c, "评分保存成功", gin.H{
 		"overall_score":   overallScore,
@@ -1148,6 +1363,12 @@ func (m *highlightClipExportJobManager) run(id string) {
 		"expires_at": &expiresAt,
 		"updated_at": now,
 	}).Error
+	m.recordClipExportOperationEvent(&analysis, "clip_export_completed", "批量导出完成", fmt.Sprintf("后台导出任务完成，片段 %d 个", len(items)), map[string]interface{}{
+		"mode":       "job",
+		"job_id":     id,
+		"item_count": len(items),
+		"zip_path":   zipPath,
+	})
 	m.mu.Lock()
 	if job, ok := m.jobs[id]; ok {
 		if job.ZipPath != "" && job.ZipPath != zipPath {
@@ -1169,8 +1390,11 @@ func (m *highlightClipExportJobManager) run(id string) {
 func (m *highlightClipExportJobManager) markFailed(id string, message string) {
 	now := time.Now()
 	expiresAt := now.Add(m.ttl)
+	var failedJob *highlightClipExportJob
 	m.mu.Lock()
 	if job, ok := m.jobs[id]; ok {
+		jobCopy := *job
+		failedJob = &jobCopy
 		if job.ZipPath != "" {
 			_ = os.Remove(job.ZipPath)
 			job.ZipPath = ""
@@ -1192,6 +1416,36 @@ func (m *highlightClipExportJobManager) markFailed(id string, message string) {
 		"expires_at": &expiresAt,
 		"updated_at": now,
 	}).Error
+	if failedJob != nil {
+		m.recordClipExportOperationEvent(&failedJob.Analysis, "clip_export_failed", "批量导出失败", message, map[string]interface{}{
+			"mode":   "job",
+			"job_id": id,
+			"error":  message,
+		})
+	}
+}
+
+func (m *highlightClipExportJobManager) recordClipExportOperationEvent(analysis *models.VideoAnalysis, eventType, label, summary string, metadata map[string]interface{}) {
+	if m == nil || m.db == nil || analysis == nil {
+		return
+	}
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	if err := models.NewAnalysisOperationEventRepository(m.db).Create(&models.AnalysisOperationEvent{
+		OrderID:      analysis.OrderID,
+		AnalysisID:   analysis.ID,
+		AnalystID:    analysis.AnalystID,
+		EventType:    eventType,
+		Section:      "clip_export",
+		FieldKey:     "highlight_clips_export",
+		FieldLabel:   label,
+		AfterSummary: summary,
+		Metadata:     operationEventMetadata(metadata),
+		CreatedAt:    time.Now(),
+	}); err != nil {
+		log.Printf("[AnalysisOperationEvent] clip export event create failed: %v", err)
+	}
 }
 
 func (m *highlightClipExportJobManager) cleanupExpired(now time.Time) {
@@ -1341,7 +1595,8 @@ func (ctrl *VideoAnalysisController) CreateHighlight(c *gin.Context) {
 		utils.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	if _, ok := ctrl.getOwnedAnalysisByID(c, req.AnalysisID); !ok {
+	analysis, ok := ctrl.getOwnedAnalysisByID(c, req.AnalysisID)
+	if !ok {
 		return
 	}
 	timestamp, mode, startTimeMs, endTimeMs, err := normalizeHighlightTiming(req.Timestamp, req.Mode, req.StartTimeMs, req.EndTimeMs)
@@ -1378,6 +1633,7 @@ func (ctrl *VideoAnalysisController) CreateHighlight(c *gin.Context) {
 	if updatedHighlight := ctrl.syncHighlightClip(highlight.ID, mode); updatedHighlight != nil {
 		highlight = updatedHighlight
 	}
+	ctrl.recordHighlightOperationEvent(analysis, highlight, "highlight_created", "新增高光标记", "", highlightOperationSummary(highlight))
 
 	utils.Success(c, "高光标记成功", highlight)
 }
@@ -1396,9 +1652,11 @@ func (ctrl *VideoAnalysisController) UpdateHighlight(c *gin.Context) {
 		utils.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	if _, _, ok := ctrl.getOwnedHighlight(c, uint(id)); !ok {
+	previousHighlight, analysis, ok := ctrl.getOwnedHighlight(c, uint(id))
+	if !ok {
 		return
 	}
+	beforeSummary := highlightOperationSummary(previousHighlight)
 	timestamp, mode, startTimeMs, endTimeMs, err := normalizeHighlightTiming(req.Timestamp, req.Mode, req.StartTimeMs, req.EndTimeMs)
 	if err != nil {
 		utils.Error(c, http.StatusBadRequest, "无效的标记时间")
@@ -1437,6 +1695,7 @@ func (ctrl *VideoAnalysisController) UpdateHighlight(c *gin.Context) {
 			return
 		}
 	}
+	ctrl.recordHighlightOperationEvent(analysis, updatedHighlight, "highlight_updated", "编辑高光标记", beforeSummary, highlightOperationSummary(updatedHighlight))
 
 	utils.Success(c, "更新成功", updatedHighlight)
 }
@@ -1619,13 +1878,27 @@ func (ctrl *VideoAnalysisController) ExportHighlightClips(c *gin.Context) {
 		utils.Error(c, status, message)
 		return
 	}
+	ctrl.recordClipExportOperationEvent(analysis, "clip_export_started", "批量导出开始", fmt.Sprintf("开始导出 %d 个高光片段", len(items)), map[string]interface{}{
+		"mode":       "sync",
+		"item_count": len(items),
+	})
 
 	zipPath, err := createHighlightClipsZip(analysis, items)
 	if err != nil {
+		ctrl.recordClipExportOperationEvent(analysis, "clip_export_failed", "批量导出失败", "生成下载包失败: "+err.Error(), map[string]interface{}{
+			"mode":       "sync",
+			"item_count": len(items),
+			"error":      err.Error(),
+		})
 		utils.Error(c, http.StatusInternalServerError, "生成下载包失败: "+err.Error())
 		return
 	}
 	defer os.Remove(zipPath)
+	ctrl.recordClipExportOperationEvent(analysis, "clip_export_completed", "批量导出完成", fmt.Sprintf("已生成 %d 个高光片段下载包", len(items)), map[string]interface{}{
+		"mode":       "sync",
+		"item_count": len(items),
+		"zip_name":   buildHighlightClipsZipName(analysis),
+	})
 
 	downloadName := buildHighlightClipsZipName(analysis)
 	c.Header("Content-Type", "application/zip")
@@ -1663,6 +1936,11 @@ func (ctrl *VideoAnalysisController) CreateHighlightClipsExportJob(c *gin.Contex
 		utils.Error(c, http.StatusInternalServerError, "创建导出任务失败: "+err.Error())
 		return
 	}
+	ctrl.recordClipExportOperationEvent(analysis, "clip_export_started", "批量导出开始", fmt.Sprintf("后台导出任务已创建，片段 %d 个", len(items)), map[string]interface{}{
+		"mode":       "job",
+		"job_id":     job.ID,
+		"item_count": len(items),
+	})
 	utils.Success(c, "导出任务已创建", job)
 }
 
@@ -1726,6 +2004,11 @@ func (ctrl *VideoAnalysisController) RetryHighlightClipsExportJob(c *gin.Context
 		utils.Error(c, http.StatusConflict, message)
 		return
 	}
+	ctrl.recordClipExportOperationEvent(analysis, "clip_export_started", "批量导出重试", fmt.Sprintf("后台导出任务已重试，片段 %d 个", len(items)), map[string]interface{}{
+		"mode":       "job_retry",
+		"job_id":     job.ID,
+		"item_count": len(items),
+	})
 	utils.Success(c, "导出任务已重试", job)
 }
 
@@ -1757,14 +2040,17 @@ func (ctrl *VideoAnalysisController) DeleteHighlight(c *gin.Context) {
 		return
 	}
 
-	if _, _, ok := ctrl.getOwnedHighlight(c, uint(id)); !ok {
+	highlight, analysis, ok := ctrl.getOwnedHighlight(c, uint(id))
+	if !ok {
 		return
 	}
+	beforeSummary := highlightOperationSummary(highlight)
 
 	if err := ctrl.highlightRepo.Delete(uint(id)); err != nil {
 		utils.Error(c, http.StatusInternalServerError, "删除高光失败")
 		return
 	}
+	ctrl.recordHighlightOperationEvent(analysis, highlight, "highlight_deleted", "删除高光标记", beforeSummary, "删除高光标记")
 
 	utils.Success(c, "删除成功", nil)
 }
@@ -2120,27 +2406,43 @@ func (ctrl *VideoAnalysisController) startAIReportGeneration(analysisID uint, re
 	}
 
 	go func() {
+		var analysis *models.VideoAnalysis
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("[AIReport] panic recovered for analysis %d: %v", analysisID, r)
 				_ = ctrl.analysisRepo.Update(analysisID, map[string]interface{}{
 					"ai_report_status": "failed",
 				})
+				ctrl.recordAIReportOperationEvent(analysis, "ai_report_generation_failed", "AI报告生成失败", fmt.Sprintf("AI报告生成异常: %v", r), reportVersion, map[string]interface{}{
+					"report_id": reportID,
+					"error":     fmt.Sprintf("%v", r),
+				})
 			}
 		}()
 
-		analysis, err := ctrl.analysisRepo.FindByID(analysisID)
+		var err error
+		analysis, err = ctrl.analysisRepo.FindByID(analysisID)
 		if err != nil || analysis == nil {
 			_ = ctrl.analysisRepo.Update(analysisID, map[string]interface{}{
 				"ai_report_status": "failed",
 			})
 			return
 		}
+		analysis.AIReportStatus = runningStatus
+		ctrl.recordAIReportOperationEvent(analysis, "ai_report_generation_started", "AI报告生成开始", fmt.Sprintf("AI报告生成任务启动，版本 v%d", reportVersion), reportVersion, map[string]interface{}{
+			"report_id": reportID,
+			"status":    runningStatus,
+		})
 
 		reportInput, scores, highlightInputs, playerProfileFacts, physicalTestFacts := ctrl.buildVideoAnalysisReportInput(analysis)
 		if reportInput == nil || scores == nil {
 			_ = ctrl.analysisRepo.Update(analysisID, map[string]interface{}{
 				"ai_report_status": "failed",
+			})
+			analysis.AIReportStatus = "failed"
+			ctrl.recordAIReportOperationEvent(analysis, "ai_report_generation_failed", "AI报告生成失败", "AI报告生成失败: 缺少评分或报告输入数据", reportVersion, map[string]interface{}{
+				"report_id": reportID,
+				"reason":    "missing_report_input",
 			})
 			return
 		}
@@ -2165,6 +2467,11 @@ func (ctrl *VideoAnalysisController) startAIReportGeneration(analysisID uint, re
 			_ = ctrl.analysisRepo.Update(analysisID, map[string]interface{}{
 				"ai_report_status": "failed",
 			})
+			analysis.AIReportStatus = "failed"
+			ctrl.recordAIReportOperationEvent(analysis, "ai_report_generation_failed", "AI报告生成失败", "AI报告生成失败: "+err.Error(), reportVersion, map[string]interface{}{
+				"report_id": reportID,
+				"error":     err.Error(),
+			})
 			return
 		}
 
@@ -2176,10 +2483,22 @@ func (ctrl *VideoAnalysisController) startAIReportGeneration(analysisID uint, re
 		}
 		if err := ctrl.analysisRepo.Update(analysisID, updates); err != nil {
 			log.Printf("[AIReport] persist failed for analysis %d: %v", analysisID, err)
+			analysis.AIReportStatus = "failed"
+			ctrl.recordAIReportOperationEvent(analysis, "ai_report_generation_failed", "AI报告生成失败", "AI报告保存失败: "+err.Error(), reportVersion, map[string]interface{}{
+				"report_id": reportID,
+				"error":     err.Error(),
+			})
 			return
 		}
+		analysis.AIReport = aiReport
+		analysis.AIReportStatus = "draft"
+		analysis.AIReportVersion = reportVersion
 
 		if reportID == 0 {
+			ctrl.recordAIReportOperationEvent(analysis, "ai_report_generation_completed", "AI报告生成完成", fmt.Sprintf("AI报告生成完成，版本 v%d，正文 %d 字", reportVersion, controllerRuneCount(aiReport)), reportVersion, map[string]interface{}{
+				"report_id":     reportID,
+				"content_chars": controllerRuneCount(aiReport),
+			})
 			return
 		}
 
@@ -2215,6 +2534,11 @@ func (ctrl *VideoAnalysisController) startAIReportGeneration(analysisID uint, re
 		reportRepo := models.NewReportRepository(ctrl.db)
 		if err := reportRepo.Update(reportID, reportUpdates); err != nil {
 			log.Printf("[AIReport] report update failed for analysis %d report %d: %v", analysisID, reportID, err)
+			analysis.AIReportStatus = "failed"
+			ctrl.recordAIReportOperationEvent(analysis, "ai_report_generation_failed", "AI报告生成失败", "报告记录更新失败: "+err.Error(), reportVersion, map[string]interface{}{
+				"report_id": reportID,
+				"error":     err.Error(),
+			})
 			return
 		}
 		ctrl.appendReportVersion(&models.ReportVersion{
@@ -2231,6 +2555,12 @@ func (ctrl *VideoAnalysisController) startAIReportGeneration(analysisID uint, re
 			TemplateVersion:         services.VideoAnalysisReportTemplateVersion,
 			DocumentTemplateVersion: services.VideoAnalysisDocumentTemplateVersion,
 			CreatedByRole:           "system",
+		})
+		ctrl.recordAIReportOperationEvent(analysis, "ai_report_generation_completed", "AI报告生成完成", fmt.Sprintf("AI报告生成完成，版本 v%d，正文 %d 字", reportVersion, controllerRuneCount(aiReport)), reportVersion, map[string]interface{}{
+			"report_id":     reportID,
+			"content_chars": controllerRuneCount(aiReport),
+			"word_url":      stringValue(reportUpdates["ai_report_url"]),
+			"pdf_url":       stringValue(reportUpdates["pdf_url"]),
 		})
 	}()
 }
@@ -2307,10 +2637,11 @@ func (ctrl *VideoAnalysisController) UpdateAIReport(c *gin.Context) {
 		return
 	}
 
+	nextVersion := analysis.AIReportVersion + 1
 	updates := map[string]interface{}{
 		"ai_report":         req.Report,
 		"ai_report_status":  "draft",
-		"ai_report_version": analysis.AIReportVersion + 1,
+		"ai_report_version": nextVersion,
 	}
 
 	err = ctrl.analysisRepo.Update(uint(id), updates)
@@ -2325,7 +2656,7 @@ func (ctrl *VideoAnalysisController) UpdateAIReport(c *gin.Context) {
 			ReportID:                report.ID,
 			OrderID:                 analysis.OrderID,
 			AnalysisID:              reportVersionAnalysisID(analysis.ID),
-			VersionNo:               analysis.AIReportVersion + 1,
+			VersionNo:               nextVersion,
 			SourceType:              models.ReportVersionSourceOnlineEdit,
 			Status:                  models.ReportVersionStatusAnalystEditing,
 			Content:                 req.Report,
@@ -2337,6 +2668,12 @@ func (ctrl *VideoAnalysisController) UpdateAIReport(c *gin.Context) {
 			CreatedByRole:           "analyst",
 		})
 	}
+	analysis.AIReportStatus = "draft"
+	analysis.AIReportVersion = nextVersion
+	ctrl.recordAIReportOperationEvent(analysis, "ai_report_updated", "AI报告人工编辑", fmt.Sprintf("人工编辑AI报告，版本 v%d，正文 %d 字", nextVersion, controllerRuneCount(req.Report)), nextVersion, map[string]interface{}{
+		"before_chars": controllerRuneCount(analysis.AIReport),
+		"after_chars":  controllerRuneCount(req.Report),
+	})
 
 	utils.Success(c, "报告已保存", nil)
 }
@@ -2581,6 +2918,20 @@ func (ctrl *VideoAnalysisController) ConfirmReport(c *gin.Context) {
 	}
 
 	ctrl.notifyAdminsReportSubmitted(reportID, analysis.PlayerName)
+	ctrl.recordAnalysisOperationEvent(&models.AnalysisOperationEvent{
+		OrderID:      analysis.OrderID,
+		AnalysisID:   analysis.ID,
+		AnalystID:    analysis.AnalystID,
+		EventType:    "report_submitted",
+		Section:      "submit",
+		AfterSummary: fmt.Sprintf("提交报告审核，报告ID=%d，版本 v%d", reportID, nextReportVersion),
+		Metadata: operationEventMetadata(map[string]interface{}{
+			"report_id":         reportID,
+			"ai_report_status":  aiReportStatus,
+			"ai_report_version": nextReportVersion,
+		}),
+		CreatedAt: time.Now(),
+	})
 
 	if generateAIReport {
 		ctrl.startAIReportGeneration(analysis.ID, reportID, nextReportVersion, "generating")
@@ -2673,6 +3024,15 @@ func (ctrl *VideoAnalysisController) CreateFromOrder(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "创建失败")
 		return
 	}
+	ctrl.recordAnalysisOperationEvent(&models.AnalysisOperationEvent{
+		OrderID:      analysis.OrderID,
+		AnalysisID:   analysis.ID,
+		AnalystID:    analysis.AnalystID,
+		EventType:    "analysis_created",
+		Section:      "analysis",
+		AfterSummary: "创建视频分析工作区",
+		CreatedAt:    time.Now(),
+	})
 
 	utils.Success(c, "分析记录已创建", analysis)
 }

@@ -2,8 +2,10 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"os/exec"
@@ -87,6 +89,11 @@ func (s *VideoClipService) QueueHighlightClip(highlightID uint) (*models.Analysi
 	}).Error; err != nil {
 		return nil, err
 	}
+	s.recordClipOperationEvent(analysis, highlight, "clip_generation_started", "片段生成开始", "高光片段已加入生成队列", map[string]interface{}{
+		"highlight_id":  highlight.ID,
+		"start_time_ms": highlight.StartTimeMs,
+		"end_time_ms":   highlight.EndTimeMs,
+	})
 
 	go s.ProcessHighlightClip(highlightID)
 	return s.FindHighlight(highlightID)
@@ -169,12 +176,21 @@ func (s *VideoClipService) ProcessHighlightClip(highlightID uint) {
 			return
 		}
 	}
-	_ = s.db.Model(&models.AnalysisHighlight{}).Where("id = ?", highlightID).Updates(map[string]interface{}{
+	if err := s.db.Model(&models.AnalysisHighlight{}).Where("id = ?", highlightID).Updates(map[string]interface{}{
 		"clip_status":       models.HighlightClipReady,
 		"clip_error":        "",
 		"video_clip_url":    clipURL,
 		"clip_generated_at": &now,
-	}).Error
+	}).Error; err != nil {
+		_, _ = s.markClipFailed(highlightID, truncateClipError("保存剪辑结果失败: "+err.Error()))
+		return
+	}
+	s.recordClipOperationEvent(analysis, highlight, "clip_generation_completed", "片段生成完成", "高光片段生成完成", map[string]interface{}{
+		"highlight_id":      highlight.ID,
+		"clip_url":          clipURL,
+		"clip_version":      version,
+		"clip_generated_at": now.Format(time.RFC3339),
+	})
 }
 
 func (s *VideoClipService) ClearHighlightClip(highlightID uint) (*models.AnalysisHighlight, error) {
@@ -234,6 +250,7 @@ func (s *VideoClipService) findHighlightWithAnalysis(highlightID uint) (*models.
 }
 
 func (s *VideoClipService) markClipFailed(highlightID uint, message string) (*models.AnalysisHighlight, error) {
+	highlight, analysis, _ := s.findHighlightWithAnalysis(highlightID)
 	if err := s.db.Model(&models.AnalysisHighlight{}).Where("id = ?", highlightID).Updates(map[string]interface{}{
 		"clip_status":       models.HighlightClipFailed,
 		"clip_error":        truncateClipError(message),
@@ -242,7 +259,40 @@ func (s *VideoClipService) markClipFailed(highlightID uint, message string) (*mo
 	}).Error; err != nil {
 		return nil, err
 	}
+	if highlight != nil && analysis != nil {
+		s.recordClipOperationEvent(analysis, highlight, "clip_generation_failed", "片段生成失败", truncateClipError(message), map[string]interface{}{
+			"highlight_id": highlight.ID,
+			"error":        truncateClipError(message),
+		})
+	}
 	return s.FindHighlight(highlightID)
+}
+
+func (s *VideoClipService) recordClipOperationEvent(analysis *models.VideoAnalysis, highlight *models.AnalysisHighlight, eventType, label, summary string, metadata map[string]interface{}) {
+	if s == nil || s.db == nil || analysis == nil || highlight == nil {
+		return
+	}
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadata["timestamp"] = highlight.Timestamp
+	metadata["marker_type"] = highlight.MarkerType
+	metadata["tag_type"] = highlight.TagType
+	data, _ := json.Marshal(metadata)
+	if err := models.NewAnalysisOperationEventRepository(s.db).Create(&models.AnalysisOperationEvent{
+		OrderID:      analysis.OrderID,
+		AnalysisID:   analysis.ID,
+		AnalystID:    analysis.AnalystID,
+		EventType:    eventType,
+		Section:      "clip",
+		FieldKey:     fmt.Sprintf("highlight_%d", highlight.ID),
+		FieldLabel:   label,
+		AfterSummary: summary,
+		Metadata:     string(data),
+		CreatedAt:    time.Now(),
+	}); err != nil {
+		log.Printf("[AnalysisOperationEvent] clip event create failed: %v", err)
+	}
 }
 
 func (s *VideoClipService) sourceInputAvailable(rawURL string) error {

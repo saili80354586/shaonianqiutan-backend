@@ -42,6 +42,7 @@ func setupVideoAnalysisControllerTest(t *testing.T) (*gorm.DB, *VideoAnalysisCon
 		&models.VideoAnalysis{},
 		&models.AnalysisHighlight{},
 		&models.VideoClipExportJob{},
+		&models.AnalysisOperationEvent{},
 	); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
@@ -90,6 +91,15 @@ func performVideoAnalysisRequest(t *testing.T, analystID uint, method, path stri
 
 	handler(c)
 	return w
+}
+
+func requireAnalysisOperationEvent(t *testing.T, db *gorm.DB, analysisID uint, eventType string) models.AnalysisOperationEvent {
+	t.Helper()
+	var event models.AnalysisOperationEvent
+	if err := db.Where("analysis_id = ? AND event_type = ?", analysisID, eventType).Order("id DESC").First(&event).Error; err != nil {
+		t.Fatalf("expected analysis operation event %s for analysis %d: %v", eventType, analysisID, err)
+	}
+	return event
 }
 
 func TestVideoAnalysisReadRequiresAssignedAnalyst(t *testing.T) {
@@ -650,5 +660,63 @@ func TestVideoAnalysisConfirmReportApprovalAndPlayerVisibility(t *testing.T) {
 		histories[1].ToStatus != models.OrderStatusProcessing ||
 		histories[2].ToStatus != models.OrderStatusCompleted {
 		t.Fatalf("unexpected status history chain: %#v", histories)
+	}
+}
+
+func TestUpdateAIReportRecordsManualEditEvent(t *testing.T) {
+	db, ctrl, owner, _ := setupVideoAnalysisControllerTest(t)
+	analysis := models.VideoAnalysis{
+		OrderID:                 701,
+		AnalystID:               owner.ID,
+		UserID:                  1701,
+		PlayerName:              "AI Edit Player",
+		PlayerPosition:          "midfielder",
+		Status:                  models.AnalysisStatusSubmitted,
+		AIReport:                "原始AI报告内容",
+		AIReportStatus:          "draft",
+		AIReportVersion:         2,
+		AIReportTemplateVersion: services.VideoAnalysisReportTemplateVersion,
+	}
+	if err := db.Create(&analysis).Error; err != nil {
+		t.Fatalf("create analysis: %v", err)
+	}
+	report := models.Report{
+		OrderID:        analysis.OrderID,
+		UserID:         analysis.UserID,
+		AnalystID:      analysis.AnalystID,
+		PlayerName:     analysis.PlayerName,
+		PlayerPosition: analysis.PlayerPosition,
+		Status:         models.ReportStatusProcessing,
+		Content:        "待审核报告",
+	}
+	if err := db.Create(&report).Error; err != nil {
+		t.Fatalf("create report: %v", err)
+	}
+
+	params := gin.Params{{Key: "id", Value: strconv.Itoa(int(analysis.ID))}}
+	res := performVideoAnalysisRequest(t, owner.ID, http.MethodPut, "/video-analysis/"+params[0].Value+"/ai-report", map[string]string{
+		"report": "人工优化后的AI报告内容，补充了关键片段和训练建议。",
+	}, params, ctrl.UpdateAIReport)
+	if res.Code != http.StatusOK {
+		t.Fatalf("update ai report status = %d, want %d, body=%s", res.Code, http.StatusOK, res.Body.String())
+	}
+
+	var updated models.VideoAnalysis
+	if err := db.First(&updated, analysis.ID).Error; err != nil {
+		t.Fatalf("reload analysis: %v", err)
+	}
+	if updated.AIReportVersion != 3 || updated.AIReportStatus != "draft" {
+		t.Fatalf("updated ai report version/status = %d/%s, want 3/draft", updated.AIReportVersion, updated.AIReportStatus)
+	}
+	event := requireAnalysisOperationEvent(t, db, analysis.ID, "ai_report_updated")
+	if event.Section != "ai_report" || !strings.Contains(event.AfterSummary, "人工编辑AI报告") {
+		t.Fatalf("manual edit event = %#v", event)
+	}
+	versions, err := models.FindReportVersionsByReportID(db, report.ID)
+	if err != nil {
+		t.Fatalf("find report versions: %v", err)
+	}
+	if len(versions) != 1 || versions[0].SourceType != models.ReportVersionSourceOnlineEdit || versions[0].VersionNo != 3 {
+		t.Fatalf("manual edit versions = %#v, want one online edit v3", versions)
 	}
 }

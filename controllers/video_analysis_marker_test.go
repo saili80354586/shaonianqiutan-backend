@@ -109,6 +109,14 @@ func TestCreateHighlightSupportsRangeMarkerMetadata(t *testing.T) {
 	if updateBody.Data.MarkerType != models.HighlightMarkerObservation || updateBody.Data.TagType != models.HighlightTacticalNote {
 		t.Fatalf("updated marker metadata = %s/%s", updateBody.Data.MarkerType, updateBody.Data.TagType)
 	}
+
+	deleted := performVideoAnalysisRequest(t, owner.ID, http.MethodDelete, "/video-analysis/highlights/"+params[0].Value, nil, params, ctrl.DeleteHighlight)
+	if deleted.Code != http.StatusOK {
+		t.Fatalf("delete marker status = %d, want %d, body=%s", deleted.Code, http.StatusOK, deleted.Body.String())
+	}
+	requireAnalysisOperationEvent(t, db, analysis.ID, "highlight_created")
+	requireAnalysisOperationEvent(t, db, analysis.ID, "highlight_updated")
+	requireAnalysisOperationEvent(t, db, analysis.ID, "highlight_deleted")
 }
 
 func TestRangeHighlightClipFailsWhenSourceVideoMissing(t *testing.T) {
@@ -152,6 +160,7 @@ func TestRangeHighlightClipFailsWhenSourceVideoMissing(t *testing.T) {
 	if marker.ClipError == "" {
 		t.Fatal("clip_error should explain source video failure")
 	}
+	requireAnalysisOperationEvent(t, db, analysis.ID, "clip_generation_failed")
 }
 
 func TestRangeHighlightQueuesAndGeneratesClip(t *testing.T) {
@@ -226,6 +235,8 @@ func TestRangeHighlightQueuesAndGeneratesClip(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tempDir, "clips", "analysis_"+strconv.Itoa(int(analysis.ID))+"_marker_"+strconv.Itoa(int(marker.ID))+"_v1.mp4")); err != nil {
 		t.Fatalf("generated clip missing: %v", err)
 	}
+	requireAnalysisOperationEvent(t, db, analysis.ID, "clip_generation_started")
+	requireAnalysisOperationEvent(t, db, analysis.ID, "clip_generation_completed")
 }
 
 func TestExportHighlightClipsIncludesReadyClipsAndManifest(t *testing.T) {
@@ -348,6 +359,8 @@ func TestExportHighlightClipsIncludesReadyClipsAndManifest(t *testing.T) {
 	if !hasZipEntryPrefix(entries, "02_待改进问题_站位问题_0m20s-0m26s") {
 		t.Fatalf("issue clip filename missing from entries: %#v", entries)
 	}
+	requireAnalysisOperationEvent(t, db, analysis.ID, "clip_export_started")
+	requireAnalysisOperationEvent(t, db, analysis.ID, "clip_export_completed")
 }
 
 func TestExportHighlightClipsSupportsMarkerTypeAndSelectedIDs(t *testing.T) {
@@ -543,6 +556,8 @@ func TestHighlightClipsExportJobTracksProgressAndDownloadsZip(t *testing.T) {
 	if persisted.Status != models.VideoClipExportReady || persisted.ZipPath == "" || persisted.RequestJSON == "" {
 		t.Fatalf("persisted job = %#v, want ready status, zip path and request", persisted)
 	}
+	requireAnalysisOperationEvent(t, db, analysis.ID, "clip_export_started")
+	requireAnalysisOperationEvent(t, db, analysis.ID, "clip_export_completed")
 
 	downloadParams := gin.Params{
 		{Key: "id", Value: strconv.Itoa(int(analysis.ID))},
@@ -615,6 +630,7 @@ func TestHighlightClipsExportJobRetryRequeuesFailedJob(t *testing.T) {
 		t.Fatalf("start failed export job: %v", err)
 	}
 	waitForClipExportJobStatus(t, ctrl, owner.ID, analysis.ID, job.ID, highlightClipExportFailed)
+	requireAnalysisOperationEvent(t, db, analysis.ID, "clip_export_failed")
 	if err := os.WriteFile(filepath.Join(clipDir, "retry-ready.mp4"), []byte("retry-ready-clip"), 0644); err != nil {
 		t.Fatalf("write retry clip: %v", err)
 	}
@@ -636,6 +652,7 @@ func TestHighlightClipsExportJobRetryRequeuesFailedJob(t *testing.T) {
 	if retryBody.Data.Status != highlightClipExportQueued {
 		t.Fatalf("retried job status = %s, want queued", retryBody.Data.Status)
 	}
+	requireAnalysisOperationEvent(t, db, analysis.ID, "clip_export_started")
 }
 
 func TestHighlightClipsExportJobMarksInterruptedPersistedJobFailed(t *testing.T) {

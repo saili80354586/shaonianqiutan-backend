@@ -96,6 +96,7 @@ func main() {
 		&models.VideoAnalysis{},
 		&models.AnalysisHighlight{},
 		&models.VideoClipExportJob{},
+		&models.AnalysisOperationEvent{},
 		&models.PlayerFilterPreset{},
 		&models.AdminOperationLog{},
 		&models.PlayerShortlist{},

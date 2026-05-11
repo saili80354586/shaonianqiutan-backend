@@ -1249,6 +1249,23 @@ func (s *AdminService) ReviewReport(reportID uint, status models.ReportStatus, r
 		if tx.Migrator().HasTable(&models.VideoAnalysis{}) {
 			_ = tx.Where("order_id = ?", report.OrderID).First(&analysis).Error
 		}
+		if status == models.ReportStatusFailed && analysis.ID != 0 {
+			if err := models.NewAnalysisOperationEventRepository(s.GetDB()).CreateWithTx(tx, &models.AnalysisOperationEvent{
+				OrderID:      report.OrderID,
+				AnalysisID:   analysis.ID,
+				AnalystID:    analysis.AnalystID,
+				EventType:    "revision_received",
+				Section:      "submit",
+				AfterSummary: firstNonEmptyProgress(remark, "管理员驳回报告，需返工"),
+				Metadata: operationMetadata(map[string]interface{}{
+					"report_id": report.ID,
+					"remark":    remark,
+				}),
+				CreatedAt: now,
+			}); err != nil {
+				log.Printf("[AnalysisOperationEvent] revision_received create failed: %v", err)
+			}
+		}
 		adminUserID := adminID
 		if err := models.CreateReportVersion(tx, &models.ReportVersion{
 			ReportID:                report.ID,
