@@ -1,8 +1,12 @@
 package services
 
 import (
+	"encoding/json"
 	"errors"
 	"log"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +33,160 @@ type AdminService struct {
 	assignmentRepo      *models.OrderAssignmentRepository
 	statusHistoryRepo   *models.OrderStatusHistoryRepository
 	notificationService *NotificationService
+}
+
+type AdminPermissionDTO struct {
+	Code        string `json:"code"`
+	Name        string `json:"name"`
+	Module      string `json:"module"`
+	Description string `json:"description"`
+}
+
+type AdminRoleDTO struct {
+	Key         string   `json:"key"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	BuiltIn     bool     `json:"built_in"`
+	Enabled     bool     `json:"enabled"`
+	Permissions []string `json:"permissions"`
+}
+
+type AdminRoleAssignmentDTO struct {
+	UserID     uint       `json:"user_id"`
+	Phone      string     `json:"phone"`
+	Nickname   string     `json:"nickname"`
+	Status     string     `json:"status"`
+	RoleKey    string     `json:"role_key"`
+	RoleName   string     `json:"role_name"`
+	AssignedBy uint       `json:"assigned_by"`
+	AssignedAt *time.Time `json:"assigned_at"`
+}
+
+type AdminRoleAssignmentResult struct {
+	TargetUserID    uint   `json:"target_user_id"`
+	TargetPhone     string `json:"target_phone"`
+	TargetNickname  string `json:"target_nickname"`
+	OldRoleKey      string `json:"old_role_key"`
+	OldRoleName     string `json:"old_role_name"`
+	NewRoleKey      string `json:"new_role_key"`
+	NewRoleName     string `json:"new_role_name"`
+	ChangedByUserID uint   `json:"changed_by_user_id"`
+}
+
+type AdminRoleAssignmentHistoryDTO struct {
+	ID             uint      `json:"id"`
+	AdminID        uint      `json:"admin_id"`
+	AdminName      string    `json:"admin_name"`
+	TargetUserID   uint      `json:"target_user_id"`
+	TargetPhone    string    `json:"target_phone"`
+	TargetNickname string    `json:"target_nickname"`
+	OldRoleKey     string    `json:"old_role_key"`
+	OldRoleName    string    `json:"old_role_name"`
+	NewRoleKey     string    `json:"new_role_key"`
+	NewRoleName    string    `json:"new_role_name"`
+	Detail         string    `json:"detail"`
+	IP             string    `json:"ip"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type AdminRoleAssignmentHistoryResponse struct {
+	List     []AdminRoleAssignmentHistoryDTO `json:"list"`
+	Total    int64                           `json:"total"`
+	Page     int                             `json:"page"`
+	PageSize int                             `json:"pageSize"`
+}
+
+type AdminRolePermissionsResponse struct {
+	Roles          []AdminRoleDTO           `json:"roles"`
+	Permissions    []AdminPermissionDTO     `json:"permissions"`
+	Admins         []AdminRoleAssignmentDTO `json:"admins"`
+	CurrentRoleKey string                   `json:"current_role_key"`
+}
+
+type AdminRoleMutationRequest struct {
+	Key         string   `json:"key"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Permissions []string `json:"permissions"`
+}
+
+type CurrentAdminPermissionsResponse struct {
+	RoleKey     string   `json:"role_key"`
+	RoleName    string   `json:"role_name"`
+	Permissions []string `json:"permissions"`
+}
+
+type AdminExceptionItem struct {
+	ID         string    `json:"id"`
+	Source     string    `json:"source"`
+	Severity   string    `json:"severity"`
+	Status     string    `json:"status"`
+	Title      string    `json:"title"`
+	Subject    string    `json:"subject"`
+	Detail     string    `json:"detail"`
+	RefID      uint      `json:"ref_id"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
+type AdminExceptionsResponse struct {
+	List     []AdminExceptionItem `json:"list"`
+	Total    int                  `json:"total"`
+	Page     int                  `json:"page"`
+	PageSize int                  `json:"pageSize"`
+	Stats    map[string]int       `json:"stats"`
+}
+
+// GetCurrentAdminPermissions 获取当前管理员自身权限，供后台菜单裁剪使用。
+func (s *AdminService) GetCurrentAdminPermissions(adminID uint) (*CurrentAdminPermissionsResponse, error) {
+	db := s.GetDB()
+	if db == nil {
+		return nil, errors.New("数据库未初始化")
+	}
+	if err := models.SeedDefaultAdminRBAC(db); err != nil {
+		return nil, err
+	}
+
+	roleKey := models.AdminRoleSuper
+	var assignment models.AdminUserRole
+	if err := db.Where("user_id = ?", adminID).First(&assignment).Error; err == nil && assignment.RoleKey != "" {
+		roleKey = assignment.RoleKey
+	} else if err != nil && err != gorm.ErrRecordNotFound && !models.IsMissingAdminRBACTableError(err) {
+		return nil, err
+	}
+
+	var role models.AdminRole
+	if err := db.Where("key = ? AND enabled = ?", roleKey, true).First(&role).Error; err != nil {
+		if err == gorm.ErrRecordNotFound && roleKey != models.AdminRoleSuper {
+			return &CurrentAdminPermissionsResponse{RoleKey: roleKey, Permissions: []string{}}, nil
+		}
+		return nil, err
+	}
+
+	permissionCodes := []string{}
+	if role.Key == models.AdminRoleSuper {
+		var permissions []models.AdminPermission
+		if err := db.Order("code ASC").Find(&permissions).Error; err != nil {
+			return nil, err
+		}
+		for _, permission := range permissions {
+			permissionCodes = append(permissionCodes, permission.Code)
+		}
+	} else {
+		var relations []models.AdminRolePermission
+		if err := db.Where("role_key = ?", role.Key).Order("permission_code ASC").Find(&relations).Error; err != nil {
+			return nil, err
+		}
+		for _, relation := range relations {
+			permissionCodes = append(permissionCodes, relation.PermissionCode)
+		}
+	}
+
+	sort.Strings(permissionCodes)
+	return &CurrentAdminPermissionsResponse{
+		RoleKey:     role.Key,
+		RoleName:    role.Name,
+		Permissions: permissionCodes,
+	}, nil
 }
 
 // NewAdminService 创建管理后台服务
@@ -74,12 +232,688 @@ func (s *AdminService) GetDB() *gorm.DB {
 	return s.orderRepo.GetDB()
 }
 
+// CreateAdminOperationLog 写入平台管理员操作审计日志
+func (s *AdminService) CreateAdminOperationLog(logItem *models.AdminOperationLog) error {
+	db := s.GetDB()
+	if db == nil {
+		return errors.New("数据库未初始化")
+	}
+	if logItem.CreatedAt.IsZero() {
+		logItem.CreatedAt = time.Now()
+	}
+	return db.Create(logItem).Error
+}
+
+// GetAdminOperationLogs 获取平台管理员操作审计日志
+func (s *AdminService) GetAdminOperationLogs(page, pageSize int, action, target, keyword string) ([]models.AdminOperationLog, int64, error) {
+	db := s.GetDB()
+	if db == nil {
+		return nil, 0, errors.New("数据库未初始化")
+	}
+
+	var logs []models.AdminOperationLog
+	var total int64
+	query := db.Model(&models.AdminOperationLog{})
+	if action = strings.TrimSpace(action); action != "" {
+		query = query.Where("action = ?", action)
+	}
+	if target = strings.TrimSpace(target); target != "" {
+		query = query.Where("target = ?", target)
+	}
+	if keyword = strings.TrimSpace(keyword); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("admin_name LIKE ? OR action LIKE ? OR target LIKE ? OR detail LIKE ? OR ip LIKE ?", like, like, like, like, like)
+	}
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	err := query.Order("created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&logs).Error
+	return logs, total, err
+}
+
+// GetAdminRolePermissions 获取管理员子角色与权限矩阵
+func (s *AdminService) GetAdminRolePermissions(adminID uint) (*AdminRolePermissionsResponse, error) {
+	db := s.GetDB()
+	if db == nil {
+		return nil, errors.New("数据库未初始化")
+	}
+	if err := models.SeedDefaultAdminRBAC(db); err != nil {
+		return nil, err
+	}
+
+	var permissions []models.AdminPermission
+	if err := db.Order("module ASC, code ASC").Find(&permissions).Error; err != nil {
+		return nil, err
+	}
+
+	var roles []models.AdminRole
+	if err := db.Order("built_in DESC, id ASC").Find(&roles).Error; err != nil {
+		return nil, err
+	}
+
+	var relations []models.AdminRolePermission
+	if err := db.Find(&relations).Error; err != nil {
+		return nil, err
+	}
+	rolePermissions := map[string][]string{}
+	for _, relation := range relations {
+		rolePermissions[relation.RoleKey] = append(rolePermissions[relation.RoleKey], relation.PermissionCode)
+	}
+	for key := range rolePermissions {
+		sort.Strings(rolePermissions[key])
+	}
+
+	currentRoleKey := models.AdminRoleSuper
+	var assignment models.AdminUserRole
+	if err := db.Where("user_id = ?", adminID).First(&assignment).Error; err == nil && assignment.RoleKey != "" {
+		currentRoleKey = assignment.RoleKey
+	} else if err != nil && err != gorm.ErrRecordNotFound && !models.IsMissingAdminRBACTableError(err) {
+		return nil, err
+	}
+
+	response := &AdminRolePermissionsResponse{
+		Roles:          make([]AdminRoleDTO, 0, len(roles)),
+		Permissions:    make([]AdminPermissionDTO, 0, len(permissions)),
+		Admins:         []AdminRoleAssignmentDTO{},
+		CurrentRoleKey: currentRoleKey,
+	}
+	roleNameMap := map[string]string{}
+	for _, permission := range permissions {
+		response.Permissions = append(response.Permissions, AdminPermissionDTO{
+			Code:        permission.Code,
+			Name:        permission.Name,
+			Module:      permission.Module,
+			Description: permission.Description,
+		})
+	}
+	for _, role := range roles {
+		roleNameMap[role.Key] = role.Name
+		response.Roles = append(response.Roles, AdminRoleDTO{
+			Key:         role.Key,
+			Name:        role.Name,
+			Description: role.Description,
+			BuiltIn:     role.BuiltIn,
+			Enabled:     role.Enabled,
+			Permissions: rolePermissions[role.Key],
+		})
+	}
+
+	var adminUsers []models.User
+	if err := db.Where("role = ?", models.RoleAdmin).Order("created_at DESC").Find(&adminUsers).Error; err != nil {
+		return nil, err
+	}
+	if len(adminUsers) > 0 {
+		userIDs := make([]uint, 0, len(adminUsers))
+		for _, user := range adminUsers {
+			userIDs = append(userIDs, user.ID)
+		}
+		var assignments []models.AdminUserRole
+		if err := db.Where("user_id IN ?", userIDs).Find(&assignments).Error; err != nil {
+			return nil, err
+		}
+		assignmentMap := map[uint]models.AdminUserRole{}
+		for _, assignment := range assignments {
+			assignmentMap[assignment.UserID] = assignment
+		}
+		for _, user := range adminUsers {
+			roleKey := models.AdminRoleSuper
+			var assignedBy uint
+			var assignedAt *time.Time
+			if assignment, ok := assignmentMap[user.ID]; ok && assignment.RoleKey != "" {
+				roleKey = assignment.RoleKey
+				assignedBy = assignment.AssignedBy
+				assignedAt = &assignment.UpdatedAt
+			}
+			response.Admins = append(response.Admins, AdminRoleAssignmentDTO{
+				UserID:     user.ID,
+				Phone:      user.Phone,
+				Nickname:   user.Nickname,
+				Status:     string(user.Status),
+				RoleKey:    roleKey,
+				RoleName:   roleNameMap[roleKey],
+				AssignedBy: assignedBy,
+				AssignedAt: assignedAt,
+			})
+		}
+	}
+	return response, nil
+}
+
+var adminRoleKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{2,39}$`)
+
+// CreateAdminRole 创建自定义管理员子角色。
+func (s *AdminService) CreateAdminRole(req AdminRoleMutationRequest) (*AdminRoleDTO, error) {
+	db := s.GetDB()
+	if db == nil {
+		return nil, errors.New("数据库未初始化")
+	}
+	if err := models.SeedDefaultAdminRBAC(db); err != nil {
+		return nil, err
+	}
+	roleKey, name, description, permissions, err := s.normalizeAdminRoleMutation(req, true)
+	if err != nil {
+		return nil, err
+	}
+
+	var count int64
+	if err := db.Model(&models.AdminRole{}).Where("key = ?", roleKey).Count(&count).Error; err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		return nil, errors.New("子角色标识已存在")
+	}
+
+	role := models.AdminRole{Key: roleKey, Name: name, Description: description, BuiltIn: false, Enabled: true}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&role).Error; err != nil {
+			return err
+		}
+		return replaceAdminRolePermissions(tx, roleKey, permissions)
+	}); err != nil {
+		return nil, err
+	}
+	return &AdminRoleDTO{Key: role.Key, Name: role.Name, Description: role.Description, BuiltIn: role.BuiltIn, Enabled: role.Enabled, Permissions: permissions}, nil
+}
+
+// UpdateAdminRole 更新自定义管理员子角色资料和权限。
+func (s *AdminService) UpdateAdminRole(roleKey string, req AdminRoleMutationRequest) (*AdminRoleDTO, error) {
+	db := s.GetDB()
+	if db == nil {
+		return nil, errors.New("数据库未初始化")
+	}
+	if err := models.SeedDefaultAdminRBAC(db); err != nil {
+		return nil, err
+	}
+	roleKey = strings.TrimSpace(roleKey)
+	if roleKey == "" {
+		return nil, errors.New("子角色标识不能为空")
+	}
+
+	var role models.AdminRole
+	if err := db.Where("key = ?", roleKey).First(&role).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("子角色不存在")
+		}
+		return nil, err
+	}
+	if role.BuiltIn {
+		return nil, errors.New("内置子角色不允许编辑")
+	}
+
+	_, name, description, permissions, err := s.normalizeAdminRoleMutation(req, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.AdminRole{}).Where("key = ?", roleKey).Updates(map[string]interface{}{
+			"name":        name,
+			"description": description,
+		}).Error; err != nil {
+			return err
+		}
+		return replaceAdminRolePermissions(tx, roleKey, permissions)
+	}); err != nil {
+		return nil, err
+	}
+
+	return &AdminRoleDTO{Key: roleKey, Name: name, Description: description, BuiltIn: false, Enabled: role.Enabled, Permissions: permissions}, nil
+}
+
+// UpdateAdminRoleStatus 启用/禁用自定义管理员子角色。
+func (s *AdminService) UpdateAdminRoleStatus(roleKey string, enabled bool) (*AdminRoleDTO, error) {
+	db := s.GetDB()
+	if db == nil {
+		return nil, errors.New("数据库未初始化")
+	}
+	if err := models.SeedDefaultAdminRBAC(db); err != nil {
+		return nil, err
+	}
+	roleKey = strings.TrimSpace(roleKey)
+	if roleKey == "" {
+		return nil, errors.New("子角色标识不能为空")
+	}
+
+	var role models.AdminRole
+	if err := db.Where("key = ?", roleKey).First(&role).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("子角色不存在")
+		}
+		return nil, err
+	}
+	if role.BuiltIn {
+		return nil, errors.New("内置子角色不允许启用或禁用")
+	}
+	if !enabled {
+		var count int64
+		if err := db.Model(&models.AdminUserRole{}).Where("role_key = ?", roleKey).Count(&count).Error; err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			return nil, errors.New("该子角色已有管理员使用，不能禁用")
+		}
+	}
+	if err := db.Model(&models.AdminRole{}).Where("key = ?", roleKey).Update("enabled", enabled).Error; err != nil {
+		return nil, err
+	}
+	role.Enabled = enabled
+	permissions, err := s.getAdminRolePermissions(roleKey)
+	if err != nil {
+		return nil, err
+	}
+	return &AdminRoleDTO{Key: role.Key, Name: role.Name, Description: role.Description, BuiltIn: role.BuiltIn, Enabled: role.Enabled, Permissions: permissions}, nil
+}
+
+// BatchAssignAdminRole 批量给管理员账号分配子角色。
+func (s *AdminService) BatchAssignAdminRole(targetUserIDs []uint, roleKey string, assignedBy uint) ([]AdminRoleAssignmentResult, error) {
+	db := s.GetDB()
+	if db == nil {
+		return nil, errors.New("数据库未初始化")
+	}
+	if len(targetUserIDs) == 0 {
+		return nil, errors.New("请选择要授权的管理员账号")
+	}
+	if len(targetUserIDs) > 100 {
+		return nil, errors.New("单次最多批量授权100个管理员")
+	}
+	roleKey = strings.TrimSpace(roleKey)
+	if roleKey == "" {
+		return nil, errors.New("子角色不能为空")
+	}
+	if err := models.SeedDefaultAdminRBAC(db); err != nil {
+		return nil, err
+	}
+	var role models.AdminRole
+	if err := db.Where("key = ? AND enabled = ?", roleKey, true).First(&role).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("管理员子角色不存在或已禁用")
+		}
+		return nil, err
+	}
+
+	seen := map[uint]bool{}
+	cleanIDs := []uint{}
+	for _, targetUserID := range targetUserIDs {
+		if targetUserID == 0 || seen[targetUserID] {
+			continue
+		}
+		seen[targetUserID] = true
+		cleanIDs = append(cleanIDs, targetUserID)
+	}
+	if len(cleanIDs) == 0 {
+		return nil, errors.New("请选择有效的管理员账号")
+	}
+
+	var users []models.User
+	if err := db.Where("id IN ?", cleanIDs).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	if len(users) != len(cleanIDs) {
+		return nil, errors.New("包含不存在的管理员账号")
+	}
+	for _, user := range users {
+		if user.Role != models.RoleAdmin {
+			return nil, errors.New("只能给管理员账号分配管理员子角色")
+		}
+	}
+
+	results := []AdminRoleAssignmentResult{}
+	for _, targetUserID := range cleanIDs {
+		result, err := s.AssignAdminRole(targetUserID, roleKey, assignedBy)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, *result)
+	}
+	return results, nil
+}
+
+func (s *AdminService) normalizeAdminRoleMutation(req AdminRoleMutationRequest, requireKey bool) (string, string, string, []string, error) {
+	roleKey := strings.TrimSpace(req.Key)
+	if requireKey {
+		if roleKey == "" {
+			return "", "", "", nil, errors.New("子角色标识不能为空")
+		}
+		if !adminRoleKeyPattern.MatchString(roleKey) {
+			return "", "", "", nil, errors.New("子角色标识只能包含小写字母、数字和下划线，且以字母开头，长度3-40")
+		}
+		if roleKey == models.AdminRoleSuper {
+			return "", "", "", nil, errors.New("不能使用超级管理员内置标识")
+		}
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return "", "", "", nil, errors.New("子角色名称不能为空")
+	}
+	description := strings.TrimSpace(req.Description)
+	permissions, err := s.validateAdminPermissionCodes(req.Permissions)
+	if err != nil {
+		return "", "", "", nil, err
+	}
+	return roleKey, name, description, permissions, nil
+}
+
+func (s *AdminService) validateAdminPermissionCodes(permissionCodes []string) ([]string, error) {
+	db := s.GetDB()
+	if db == nil {
+		return nil, errors.New("数据库未初始化")
+	}
+	normalized := make([]string, 0, len(permissionCodes))
+	seen := map[string]bool{}
+	for _, code := range permissionCodes {
+		code = strings.TrimSpace(code)
+		if code == "" || seen[code] {
+			continue
+		}
+		seen[code] = true
+		normalized = append(normalized, code)
+	}
+	if len(normalized) == 0 {
+		return nil, errors.New("至少选择一个权限点")
+	}
+	var count int64
+	if err := db.Model(&models.AdminPermission{}).Where("code IN ?", normalized).Count(&count).Error; err != nil {
+		return nil, err
+	}
+	if int(count) != len(normalized) {
+		return nil, errors.New("包含不存在的权限点")
+	}
+	sort.Strings(normalized)
+	return normalized, nil
+}
+
+func replaceAdminRolePermissions(tx *gorm.DB, roleKey string, permissionCodes []string) error {
+	if err := tx.Where("role_key = ?", roleKey).Delete(&models.AdminRolePermission{}).Error; err != nil {
+		return err
+	}
+	for _, permissionCode := range permissionCodes {
+		relation := models.AdminRolePermission{RoleKey: roleKey, PermissionCode: permissionCode}
+		if err := tx.Create(&relation).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *AdminService) getAdminRolePermissions(roleKey string) ([]string, error) {
+	db := s.GetDB()
+	if db == nil {
+		return nil, errors.New("数据库未初始化")
+	}
+	var relations []models.AdminRolePermission
+	if err := db.Where("role_key = ?", roleKey).Order("permission_code ASC").Find(&relations).Error; err != nil {
+		return nil, err
+	}
+	permissions := make([]string, 0, len(relations))
+	for _, relation := range relations {
+		permissions = append(permissions, relation.PermissionCode)
+	}
+	return permissions, nil
+}
+
+// AssignAdminRole 给管理员账号分配子角色
+func (s *AdminService) AssignAdminRole(targetUserID uint, roleKey string, assignedBy uint) (*AdminRoleAssignmentResult, error) {
+	db := s.GetDB()
+	if db == nil {
+		return nil, errors.New("数据库未初始化")
+	}
+	roleKey = strings.TrimSpace(roleKey)
+	if roleKey == "" {
+		return nil, errors.New("子角色不能为空")
+	}
+	if err := models.SeedDefaultAdminRBAC(db); err != nil {
+		return nil, err
+	}
+
+	user, err := s.userRepo.FindByID(targetUserID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("用户不存在")
+	}
+	if user.Role != models.RoleAdmin {
+		return nil, errors.New("只能给管理员账号分配管理员子角色")
+	}
+
+	var role models.AdminRole
+	if err := db.Where("key = ? AND enabled = ?", roleKey, true).First(&role).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.New("管理员子角色不存在或已禁用")
+		}
+		return nil, err
+	}
+
+	oldRoleKey := models.AdminRoleSuper
+	var existing models.AdminUserRole
+	if err := db.Where("user_id = ?", targetUserID).First(&existing).Error; err == nil && existing.RoleKey != "" {
+		oldRoleKey = existing.RoleKey
+	} else if err != nil && err != gorm.ErrRecordNotFound && !models.IsMissingAdminRBACTableError(err) {
+		return nil, err
+	}
+
+	assignment := models.AdminUserRole{UserID: targetUserID, RoleKey: roleKey, AssignedBy: assignedBy}
+	if err := db.Where("user_id = ?", targetUserID).Assign(assignment).FirstOrCreate(&assignment).Error; err != nil {
+		return nil, err
+	}
+
+	roleNameMap, err := s.getAdminRoleNameMap()
+	if err != nil {
+		return nil, err
+	}
+	return &AdminRoleAssignmentResult{
+		TargetUserID:    user.ID,
+		TargetPhone:     user.Phone,
+		TargetNickname:  user.Nickname,
+		OldRoleKey:      oldRoleKey,
+		OldRoleName:     roleNameMap[oldRoleKey],
+		NewRoleKey:      role.Key,
+		NewRoleName:     role.Name,
+		ChangedByUserID: assignedBy,
+	}, nil
+}
+
+func (s *AdminService) getAdminRoleNameMap() (map[string]string, error) {
+	db := s.GetDB()
+	if db == nil {
+		return nil, errors.New("数据库未初始化")
+	}
+	var roles []models.AdminRole
+	if err := db.Find(&roles).Error; err != nil {
+		return nil, err
+	}
+	result := map[string]string{}
+	for _, role := range roles {
+		result[role.Key] = role.Name
+	}
+	if result[models.AdminRoleSuper] == "" {
+		result[models.AdminRoleSuper] = "超级管理员"
+	}
+	return result, nil
+}
+
+// GetAdminRoleAssignmentHistory 获取管理员子角色授权历史。
+func (s *AdminService) GetAdminRoleAssignmentHistory(page, pageSize int, targetUserID uint) (*AdminRoleAssignmentHistoryResponse, error) {
+	db := s.GetDB()
+	if db == nil {
+		return nil, errors.New("数据库未初始化")
+	}
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	query := db.Model(&models.AdminOperationLog{}).
+		Where("action = ? AND target = ?", "assign_admin_role", "admin_user_role")
+	if targetUserID > 0 {
+		query = query.Where("target_id = ?", targetUserID)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	var logs []models.AdminOperationLog
+	if err := query.Order("created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&logs).Error; err != nil {
+		return nil, err
+	}
+
+	items := make([]AdminRoleAssignmentHistoryDTO, 0, len(logs))
+	for _, logItem := range logs {
+		items = append(items, parseAdminRoleAssignmentLog(logItem))
+	}
+	return &AdminRoleAssignmentHistoryResponse{
+		List:     items,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
+}
+
+func parseAdminRoleAssignmentLog(logItem models.AdminOperationLog) AdminRoleAssignmentHistoryDTO {
+	item := AdminRoleAssignmentHistoryDTO{
+		ID:           logItem.ID,
+		AdminID:      logItem.AdminID,
+		AdminName:    logItem.AdminName,
+		TargetUserID: logItem.TargetID,
+		Detail:       logItem.Detail,
+		IP:           logItem.IP,
+		CreatedAt:    logItem.CreatedAt,
+	}
+
+	var detail struct {
+		TargetUserID   uint   `json:"target_user_id"`
+		TargetPhone    string `json:"target_phone"`
+		TargetNickname string `json:"target_nickname"`
+		OldRoleKey     string `json:"old_role_key"`
+		OldRoleName    string `json:"old_role_name"`
+		NewRoleKey     string `json:"new_role_key"`
+		NewRoleName    string `json:"new_role_name"`
+	}
+	if err := json.Unmarshal([]byte(logItem.Detail), &detail); err == nil {
+		if detail.TargetUserID > 0 {
+			item.TargetUserID = detail.TargetUserID
+		}
+		item.TargetPhone = detail.TargetPhone
+		item.TargetNickname = detail.TargetNickname
+		item.OldRoleKey = detail.OldRoleKey
+		item.OldRoleName = detail.OldRoleName
+		item.NewRoleKey = detail.NewRoleKey
+		item.NewRoleName = detail.NewRoleName
+	}
+	return item
+}
+
+// GetExceptions 获取异常管控列表，当前聚合举报与失败登录两类高风险事件
+func (s *AdminService) GetExceptions(page, pageSize int, status, source, severity string) (*AdminExceptionsResponse, error) {
+	db := s.GetDB()
+	if db == nil {
+		return nil, errors.New("数据库未初始化")
+	}
+
+	items := []AdminExceptionItem{}
+
+	if source == "" || source == "content_report" {
+		var reports []models.ContentReport
+		if err := db.Order("created_at DESC").Limit(200).Find(&reports).Error; err != nil {
+			return nil, err
+		}
+		for _, report := range reports {
+			itemStatus := "open"
+			if report.Status == models.ContentReportStatusResolved || report.Status == models.ContentReportStatusRejected {
+				itemStatus = "closed"
+			}
+			itemSeverity := "medium"
+			if report.TargetType == models.ContentReportTypeUser || report.TargetType == models.ContentReportTypeMessage {
+				itemSeverity = "high"
+			}
+			items = append(items, AdminExceptionItem{
+				ID:         "content_report:" + uintToStringForAdmin(report.ID),
+				Source:     "content_report",
+				Severity:   itemSeverity,
+				Status:     itemStatus,
+				Title:      "内容举报待处理",
+				Subject:    string(report.TargetType),
+				Detail:     strings.TrimSpace(report.Reason + " " + report.Detail),
+				RefID:      report.ID,
+				OccurredAt: report.CreatedAt,
+			})
+		}
+	}
+
+	if source == "" || source == "login_failure" {
+		var logs []models.LoginLog
+		if err := db.Where("status = ?", "failed").Order("created_at DESC").Limit(200).Find(&logs).Error; err != nil {
+			return nil, err
+		}
+		for _, item := range logs {
+			items = append(items, AdminExceptionItem{
+				ID:         "login_failure:" + uintToStringForAdmin(item.ID),
+				Source:     "login_failure",
+				Severity:   "medium",
+				Status:     "open",
+				Title:      "登录失败",
+				Subject:    item.Phone,
+				Detail:     item.FailReason,
+				RefID:      item.ID,
+				OccurredAt: item.CreatedAt,
+			})
+		}
+	}
+
+	filtered := make([]AdminExceptionItem, 0, len(items))
+	stats := map[string]int{"total": 0, "open": 0, "closed": 0, "high": 0, "medium": 0, "low": 0}
+	for _, item := range items {
+		stats["total"]++
+		stats[item.Status]++
+		stats[item.Severity]++
+		if status != "" && item.Status != status {
+			continue
+		}
+		if severity != "" && item.Severity != severity {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].OccurredAt.After(filtered[j].OccurredAt)
+	})
+
+	total := len(filtered)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	return &AdminExceptionsResponse{
+		List:     filtered[start:end],
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+		Stats:    stats,
+	}, nil
+}
+
 func reportVersionAnalysisIDForService(id uint) *uint {
 	if id == 0 {
 		return nil
 	}
 	value := id
 	return &value
+}
+
+func uintToStringForAdmin(id uint) string {
+	return strconv.FormatUint(uint64(id), 10)
 }
 
 // SetNotificationService 注入通知服务
@@ -252,7 +1086,56 @@ func (s *AdminService) GetUserList(page, pageSize int) ([]models.User, int64, er
 
 // UpdateUserStatus 更新用户状态
 func (s *AdminService) UpdateUserStatus(userID uint, status string) error {
+	if !isValidAdminUserStatus(status) {
+		return errors.New("无效的用户状态")
+	}
 	return s.userRepo.UpdateStatus(userID, status)
+}
+
+// UpdateUser 更新用户基础资料
+func (s *AdminService) UpdateUser(userID uint, updates map[string]interface{}) (*models.User, error) {
+	user, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("用户不存在")
+	}
+
+	if roleValue, ok := updates["role"]; ok && !isValidAdminUserRole(roleValue.(string)) {
+		return nil, errors.New("无效的用户角色")
+	}
+	if currentRoleValue, ok := updates["current_role"]; ok && currentRoleValue.(string) != "" && !isValidAdminUserRole(currentRoleValue.(string)) {
+		return nil, errors.New("无效的当前角色")
+	}
+	if statusValue, ok := updates["status"]; ok && !isValidAdminUserStatus(statusValue.(string)) {
+		return nil, errors.New("无效的用户状态")
+	}
+
+	if phoneValue, ok := updates["phone"]; ok {
+		phone := strings.TrimSpace(phoneValue.(string))
+		if phone == "" {
+			return nil, errors.New("手机号不能为空")
+		}
+		if phone != user.Phone {
+			existing, err := s.userRepo.FindByPhone(phone)
+			if err != nil {
+				return nil, err
+			}
+			if existing != nil && existing.ID != userID {
+				return nil, errors.New("手机号已被其他用户使用")
+			}
+		}
+		updates["phone"] = phone
+	}
+
+	if len(updates) == 0 {
+		return user, nil
+	}
+	if err := s.userRepo.Update(userID, updates); err != nil {
+		return nil, err
+	}
+	return s.userRepo.FindByID(userID)
 }
 
 // DeleteUser 删除用户
@@ -265,6 +1148,24 @@ func (s *AdminService) DeleteUser(userID uint) error {
 		return errors.New("不能删除管理员账号")
 	}
 	return s.userRepo.Delete(userID)
+}
+
+func isValidAdminUserRole(role string) bool {
+	switch models.UserRole(role) {
+	case models.RoleUser, models.RoleAnalyst, models.RoleAdmin, models.RoleClub, models.RoleCoach, models.RoleScout:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidAdminUserStatus(status string) bool {
+	switch models.UserStatus(status) {
+	case models.StatusActive, models.StatusInactive, models.StatusBanned, models.StatusPending:
+		return true
+	default:
+		return false
+	}
 }
 
 // ========== Report Management ==========
@@ -453,6 +1354,11 @@ func (s *AdminService) CancelOrder(orderID, adminID uint) error {
 
 // AssignOrder 管理员派单给分析师
 func (s *AdminService) AssignOrder(orderID, analystID, adminID uint) (*models.Order, error) {
+	return s.AssignOrderWithRequest(orderID, AssignOrderRequest{AnalystID: analystID}, adminID)
+}
+
+// AssignOrderWithRequest 管理员派单给分析师，并保留派单截止时间和备注
+func (s *AdminService) AssignOrderWithRequest(orderID uint, req AssignOrderRequest, adminID uint) (*models.Order, error) {
 	order, err := s.orderRepo.FindByID(orderID)
 	if err != nil {
 		return nil, err
@@ -464,7 +1370,7 @@ func (s *AdminService) AssignOrder(orderID, analystID, adminID uint) (*models.Or
 		return nil, errors.New("订单状态不允许派单")
 	}
 
-	analyst, err := s.analystRepo.FindByID(analystID)
+	analyst, err := s.analystRepo.FindByID(req.AnalystID)
 	if err != nil {
 		return nil, err
 	}
@@ -481,9 +1387,19 @@ func (s *AdminService) AssignOrder(orderID, analystID, adminID uint) (*models.Or
 	}
 	assignedAt := time.Now()
 	deadline := assignedAt.Add(time.Duration(deadlineHours) * time.Hour)
+	if req.Deadline != nil {
+		if !req.Deadline.After(assignedAt) {
+			return nil, errors.New("截止时间必须晚于当前时间")
+		}
+		deadline = *req.Deadline
+	}
+	dispatchReason := "管理员派发订单"
+	if note := strings.TrimSpace(req.Note); note != "" {
+		dispatchReason = dispatchReason + "；备注：" + note
+	}
 
 	updates := map[string]interface{}{
-		"analyst_id":  analystID,
+		"analyst_id":  req.AnalystID,
 		"status":      models.OrderStatusAssigned,
 		"assigned_at": assignedAt,
 		"deadline":    deadline,
@@ -496,7 +1412,7 @@ func (s *AdminService) AssignOrder(orderID, analystID, adminID uint) (*models.Or
 		if s.assignmentRepo != nil {
 			assignment := &models.OrderAssignment{
 				OrderID:    orderID,
-				AnalystID:  analystID,
+				AnalystID:  req.AnalystID,
 				AssignedBy: optionalActorID(adminID),
 				AssignedAt: assignedAt,
 				Status:     models.OrderAssignmentStatusPending,
@@ -505,7 +1421,7 @@ func (s *AdminService) AssignOrder(orderID, analystID, adminID uint) (*models.Or
 				return err
 			}
 		}
-		return s.createStatusHistory(tx, orderID, order.Status, models.OrderStatusAssigned, adminID, "admin", "管理员派发订单")
+		return s.createStatusHistory(tx, orderID, order.Status, models.OrderStatusAssigned, adminID, "admin", dispatchReason)
 	}); err != nil {
 		return nil, err
 	}
@@ -866,6 +1782,9 @@ func (s *AdminService) GetAvailableAnalysts() ([]AvailableAnalyst, error) {
 func (s *AdminService) AdminLogin(username, password string) (string, *models.User, error) {
 	admin, err := s.userRepo.FindByUsername(username)
 	if err != nil {
+		return "", nil, errors.New("用户名或密码错误")
+	}
+	if admin == nil {
 		return "", nil, errors.New("用户名或密码错误")
 	}
 

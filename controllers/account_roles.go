@@ -22,6 +22,35 @@ func NewAccountRoleController(db *gorm.DB) *AccountRoleController {
 	return &AccountRoleController{db: db}
 }
 
+func (ctrl *AccountRoleController) writeAdminOperationLog(c *gin.Context, admin *models.User, action, target string, targetID uint, detail string) {
+	if ctrl == nil || ctrl.db == nil || admin == nil {
+		return
+	}
+	adminName := admin.Nickname
+	if strings.TrimSpace(adminName) == "" {
+		adminName = admin.Name
+	}
+	if strings.TrimSpace(adminName) == "" {
+		adminName = admin.Phone
+	}
+	if strings.TrimSpace(adminName) == "" {
+		adminName = "管理员"
+	}
+	if err := ctrl.db.Create(&models.AdminOperationLog{
+		ClubID:    0,
+		AdminID:   admin.ID,
+		AdminName: adminName,
+		Action:    action,
+		Target:    target,
+		TargetID:  targetID,
+		Detail:    detail,
+		IP:        c.ClientIP(),
+		CreatedAt: time.Now(),
+	}).Error; err != nil {
+		fmt.Printf("[AdminAudit] write role application audit log failed: %v\n", err)
+	}
+}
+
 type accountRoleItem struct {
 	Type         models.UserRole `json:"type"`
 	Status       string          `json:"status"`
@@ -357,6 +386,7 @@ func (ctrl *AccountRoleController) ReviewRoleApplication(c *gin.Context) {
 		return
 	}
 
+	ctrl.writeAdminOperationLog(c, admin, "review_role_application", "role_application", application.ID, fmt.Sprintf("审核用户ID=%d追加角色=%s，结果=%s", application.UserID, application.Role, req.Status))
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "审核已完成"})
 }
 

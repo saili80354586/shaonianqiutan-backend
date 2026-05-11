@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/shaonianqiutan/backend/config"
 	"github.com/shaonianqiutan/backend/models"
+	"gorm.io/gorm"
 )
 
 // Claims JWT声明
@@ -184,6 +186,87 @@ func AdminRoleMiddleware() gin.HandlerFunc {
 		c.Set("adminId", user.ID)
 		c.Next()
 	}
+}
+
+// AdminPermissionMiddleware 校验管理员子角色是否拥有指定权限点。
+func AdminPermissionMiddleware(permissionCode string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userValue, exists := c.Get("user")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "未认证"})
+			c.Abort()
+			return
+		}
+
+		user, ok := userValue.(*models.User)
+		if !ok || user == nil || user.Status != models.StatusActive || user.Role != models.RoleAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "您没有管理员权限"})
+			c.Abort()
+			return
+		}
+
+		allowed, roleKey, err := hasAdminPermission(user.ID, permissionCode)
+		if err != nil {
+			log.Printf("[AdminRBAC] check permission failed user=%d permission=%s err=%v", user.ID, permissionCode, err)
+			c.JSON(http.StatusForbidden, gin.H{"error": "权限校验失败"})
+			c.Abort()
+			return
+		}
+		if !allowed {
+			c.JSON(http.StatusForbidden, gin.H{"error": "当前管理员子角色无此操作权限"})
+			c.Abort()
+			return
+		}
+
+		c.Set("adminRoleKey", roleKey)
+		c.Set("adminPermission", permissionCode)
+		c.Next()
+	}
+}
+
+func hasAdminPermission(userID uint, permissionCode string) (bool, string, error) {
+	if permissionCode == "" {
+		return true, models.AdminRoleSuper, nil
+	}
+
+	db := config.GetDB()
+	var assignment models.AdminUserRole
+	err := db.Where("user_id = ?", userID).First(&assignment).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return true, models.AdminRoleSuper, nil
+		}
+		if models.IsMissingAdminRBACTableError(err) {
+			return true, models.AdminRoleSuper, nil
+		}
+		return false, "", err
+	}
+
+	var role models.AdminRole
+	if err := db.Where("key = ? AND enabled = ?", assignment.RoleKey, true).First(&role).Error; err != nil {
+		if models.IsMissingAdminRBACTableError(err) {
+			return true, models.AdminRoleSuper, nil
+		}
+		if err == gorm.ErrRecordNotFound {
+			return false, assignment.RoleKey, nil
+		}
+		return false, assignment.RoleKey, err
+	}
+	if role.Key == models.AdminRoleSuper {
+		return true, role.Key, nil
+	}
+
+	var count int64
+	err = db.Model(&models.AdminRolePermission{}).
+		Where("role_key = ? AND permission_code = ?", role.Key, permissionCode).
+		Count(&count).Error
+	if err != nil {
+		if models.IsMissingAdminRBACTableError(err) {
+			return true, models.AdminRoleSuper, nil
+		}
+		return false, role.Key, err
+	}
+	return count > 0, role.Key, nil
 }
 
 // ScoutRoleMiddleware 球探角色权限中间件

@@ -108,6 +108,10 @@ func main() {
 		&models.FAQ{},
 		&models.LoginLog{},
 		&models.SystemSetting{},
+		&models.AdminPermission{},
+		&models.AdminRole{},
+		&models.AdminRolePermission{},
+		&models.AdminUserRole{},
 	)
 	if err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
@@ -118,6 +122,9 @@ func main() {
 	}
 	if err := models.BackfillOrderAssignmentsFromOrders(db); err != nil {
 		log.Printf("订单派发记录回填失败: %v", err)
+	}
+	if err := models.SeedDefaultAdminRBAC(db); err != nil {
+		log.Printf("管理员权限默认数据初始化失败: %v", err)
 	}
 
 	// 初始化 WebSocket Hub

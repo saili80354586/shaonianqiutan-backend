@@ -24,7 +24,7 @@ func SetupAnalystApplicationRoutes(
 	admin.Use(middleware.AuthMiddleware())
 	admin.Use(middleware.AdminRoleMiddleware())
 	{
-		admin.GET("/", appController.GetApplicationList)
-		admin.POST("/:id/review", appController.ReviewApplication)
+		admin.GET("/", middleware.AdminPermissionMiddleware("applications.review"), appController.GetApplicationList)
+		admin.POST("/:id/review", middleware.AdminPermissionMiddleware("applications.review"), appController.ReviewApplication)
 	}
 }

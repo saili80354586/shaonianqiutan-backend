@@ -27,6 +27,41 @@ func NewAdminController(adminService *services.AdminService, videoAnalysisRepo *
 	return &AdminController{adminService: adminService, videoAnalysisRepo: videoAnalysisRepo}
 }
 
+func (ctrl *AdminController) writeAuditLog(c *gin.Context, action, target string, targetID uint, detail string) {
+	if ctrl == nil || ctrl.adminService == nil {
+		return
+	}
+	adminID := c.GetUint("userId")
+	if adminID == 0 {
+		adminID = c.GetUint("adminId")
+	}
+	adminName := "管理员"
+	if userValue, exists := c.Get("user"); exists {
+		if user, ok := userValue.(*models.User); ok && user != nil {
+			if strings.TrimSpace(user.Nickname) != "" {
+				adminName = user.Nickname
+			} else if strings.TrimSpace(user.Name) != "" {
+				adminName = user.Name
+			} else if strings.TrimSpace(user.Phone) != "" {
+				adminName = user.Phone
+			}
+		}
+	}
+	if err := ctrl.adminService.CreateAdminOperationLog(&models.AdminOperationLog{
+		ClubID:    0,
+		AdminID:   adminID,
+		AdminName: adminName,
+		Action:    action,
+		Target:    target,
+		TargetID:  targetID,
+		Detail:    detail,
+		IP:        c.ClientIP(),
+		CreatedAt: time.Now(),
+	}); err != nil {
+		fmt.Printf("[AdminAudit] write audit log failed: %v\n", err)
+	}
+}
+
 func (ctrl *AdminController) GetSystemSettings(c *gin.Context) {
 	settings := models.LoadAdminSystemSettings(config.GetDB())
 	utils.Success(c, "", settings)
@@ -72,6 +107,7 @@ func (ctrl *AdminController) UpdateSystemSettings(c *gin.Context) {
 		return
 	}
 
+	ctrl.writeAuditLog(c, "update_system_settings", "system_settings", 0, fmt.Sprintf("更新系统设置：站点=%s，佣金=%.2f%%", req.SiteName, req.CommissionRate))
 	utils.Success(c, "系统设置已保存", req)
 }
 
@@ -169,6 +205,18 @@ type UpdateUserStatusRequest struct {
 	Status string `json:"status" binding:"required,oneof=active inactive"`
 }
 
+// UpdateUserRequest 更新用户基础资料请求
+type UpdateUserRequest struct {
+	Phone       *string `json:"phone"`
+	Nickname    *string `json:"nickname"`
+	Name        *string `json:"name"`
+	Role        *string `json:"role"`
+	CurrentRole *string `json:"current_role"`
+	Status      *string `json:"status"`
+	Province    *string `json:"province"`
+	City        *string `json:"city"`
+}
+
 // UpdateUserStatus 更新用户状态
 func (ctrl *AdminController) UpdateUserStatus(c *gin.Context) {
 	idStr := c.Param("id")
@@ -190,7 +238,59 @@ func (ctrl *AdminController) UpdateUserStatus(c *gin.Context) {
 		return
 	}
 
+	ctrl.writeAuditLog(c, "update_user_status", "user", uint(id), "更新用户状态为："+req.Status)
 	utils.Success(c, "状态更新成功", nil)
+}
+
+// UpdateUser 更新用户基础资料
+func (ctrl *AdminController) UpdateUser(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的用户ID")
+		return
+	}
+
+	var req UpdateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	updates := map[string]interface{}{}
+	if req.Phone != nil {
+		updates["phone"] = strings.TrimSpace(*req.Phone)
+	}
+	if req.Nickname != nil {
+		updates["nickname"] = strings.TrimSpace(*req.Nickname)
+	}
+	if req.Name != nil {
+		updates["name"] = strings.TrimSpace(*req.Name)
+	}
+	if req.Role != nil {
+		updates["role"] = strings.TrimSpace(*req.Role)
+	}
+	if req.CurrentRole != nil {
+		updates["current_role"] = strings.TrimSpace(*req.CurrentRole)
+	}
+	if req.Status != nil {
+		updates["status"] = strings.TrimSpace(*req.Status)
+	}
+	if req.Province != nil {
+		updates["province"] = strings.TrimSpace(*req.Province)
+	}
+	if req.City != nil {
+		updates["city"] = strings.TrimSpace(*req.City)
+	}
+
+	user, err := ctrl.adminService.UpdateUser(uint(id), updates)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "更新失败: "+err.Error())
+		return
+	}
+
+	ctrl.writeAuditLog(c, "update_user", "user", uint(id), "更新用户基础资料")
+	utils.Success(c, "用户已更新", user)
 }
 
 // GetAllOrders 获取所有订单列表
@@ -302,6 +402,7 @@ func (ctrl *AdminController) ReviewReport(c *gin.Context) {
 		return
 	}
 
+	ctrl.writeAuditLog(c, "review_report", "report", uint(id), "审核报告状态为："+string(req.Status))
 	utils.Success(c, "审核完成", nil)
 }
 
@@ -559,6 +660,7 @@ func (ctrl *AdminController) DeleteUser(c *gin.Context) {
 		return
 	}
 
+	ctrl.writeAuditLog(c, "delete_user", "user", uint(id), "删除用户")
 	utils.Success(c, "删除成功", nil)
 }
 
@@ -578,12 +680,20 @@ func (ctrl *AdminController) AssignOrder(c *gin.Context) {
 	}
 
 	adminID := c.GetUint("adminId")
-	order, err := ctrl.adminService.AssignOrder(uint(id), req.AnalystID, adminID)
+	order, err := ctrl.adminService.AssignOrderWithRequest(uint(id), req, adminID)
 	if err != nil {
 		utils.Error(c, http.StatusBadRequest, "派单失败: "+err.Error())
 		return
 	}
 
+	detail := fmt.Sprintf("订单派发给分析师ID=%d", req.AnalystID)
+	if req.Deadline != nil {
+		detail += "，截止时间=" + req.Deadline.Format("2006-01-02 15:04:05")
+	}
+	if note := strings.TrimSpace(req.Note); note != "" {
+		detail += "，备注=" + note
+	}
+	ctrl.writeAuditLog(c, "assign_order", "order", uint(id), detail)
 	utils.Success(c, "派单成功", gin.H{"order": order})
 }
 
@@ -603,6 +713,7 @@ func (ctrl *AdminController) CancelOrder(c *gin.Context) {
 		return
 	}
 
+	ctrl.writeAuditLog(c, "cancel_order", "order", uint(id), "管理员取消订单")
 	utils.Success(c, "订单已取消", nil)
 }
 
@@ -668,6 +779,7 @@ func (ctrl *AdminController) AuditAnalyst(c *gin.Context) {
 		return
 	}
 
+	ctrl.writeAuditLog(c, "audit_analyst", "analyst", uint(id), "审核分析师状态为："+req.Status)
 	utils.Success(c, "审核完成", nil)
 }
 
@@ -697,6 +809,7 @@ func (ctrl *AdminController) UpdateAnalystStatus(c *gin.Context) {
 		return
 	}
 
+	ctrl.writeAuditLog(c, "update_analyst_status", "analyst", uint(id), "更新分析师状态为："+req.Status)
 	utils.Success(c, "状态更新成功", nil)
 }
 
@@ -796,6 +909,7 @@ func (ctrl *AdminController) ProcessSettlement(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "结算处理失败: "+err.Error())
 		return
 	}
+	ctrl.writeAuditLog(c, "process_settlement", "settlement", 0, fmt.Sprintf("处理结算订单数=%d", len(req.OrderIDs)))
 	utils.Success(c, "结算处理成功", nil)
 }
 
@@ -853,6 +967,7 @@ func (ctrl *AdminController) HandleContentReport(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "处理失败: "+err.Error())
 		return
 	}
+	ctrl.writeAuditLog(c, "handle_content_report", "content_report", uint(id), "处理举报状态为："+req.Status)
 	utils.Success(c, "处理成功", nil)
 }
 
@@ -893,6 +1008,7 @@ func (ctrl *AdminController) CreateSensitiveWord(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "创建失败: "+err.Error())
 		return
 	}
+	ctrl.writeAuditLog(c, "create_sensitive_word", "sensitive_word", word.ID, "创建敏感词："+req.Word)
 	utils.Success(c, "创建成功", word)
 }
 
@@ -934,6 +1050,7 @@ func (ctrl *AdminController) UpdateSensitiveWord(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "更新失败: "+err.Error())
 		return
 	}
+	ctrl.writeAuditLog(c, "update_sensitive_word", "sensitive_word", uint(id), "更新敏感词配置")
 	utils.Success(c, "更新成功", nil)
 }
 
@@ -949,6 +1066,7 @@ func (ctrl *AdminController) DeleteSensitiveWord(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "删除失败: "+err.Error())
 		return
 	}
+	ctrl.writeAuditLog(c, "delete_sensitive_word", "sensitive_word", uint(id), "删除敏感词")
 	utils.Success(c, "删除成功", nil)
 }
 
@@ -1000,6 +1118,7 @@ func (ctrl *AdminController) CreatePlatformAnnouncement(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "创建失败: "+err.Error())
 		return
 	}
+	ctrl.writeAuditLog(c, "create_announcement", "announcement", ann.ID, "发布平台公告："+req.Title)
 	utils.Success(c, "创建成功", ann)
 }
 
@@ -1053,6 +1172,7 @@ func (ctrl *AdminController) UpdatePlatformAnnouncement(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "更新失败: "+err.Error())
 		return
 	}
+	ctrl.writeAuditLog(c, "update_announcement", "announcement", uint(id), "更新平台公告")
 	utils.Success(c, "更新成功", nil)
 }
 
@@ -1068,6 +1188,7 @@ func (ctrl *AdminController) DeletePlatformAnnouncement(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "删除失败: "+err.Error())
 		return
 	}
+	ctrl.writeAuditLog(c, "delete_announcement", "announcement", uint(id), "删除平台公告")
 	utils.Success(c, "删除成功", nil)
 }
 
@@ -1118,6 +1239,7 @@ func (ctrl *AdminController) CreateBanner(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "创建失败: "+err.Error())
 		return
 	}
+	ctrl.writeAuditLog(c, "create_banner", "banner", banner.ID, "创建轮播图："+req.Title)
 	utils.Success(c, "创建成功", banner)
 }
 
@@ -1175,6 +1297,7 @@ func (ctrl *AdminController) UpdateBanner(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "更新失败: "+err.Error())
 		return
 	}
+	ctrl.writeAuditLog(c, "update_banner", "banner", uint(id), "更新轮播图")
 	utils.Success(c, "更新成功", nil)
 }
 
@@ -1190,6 +1313,7 @@ func (ctrl *AdminController) DeleteBanner(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "删除失败: "+err.Error())
 		return
 	}
+	ctrl.writeAuditLog(c, "delete_banner", "banner", uint(id), "删除轮播图")
 	utils.Success(c, "删除成功", nil)
 }
 
@@ -1235,6 +1359,7 @@ func (ctrl *AdminController) CreateFAQ(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "创建失败: "+err.Error())
 		return
 	}
+	ctrl.writeAuditLog(c, "create_faq", "faq", faq.ID, "创建FAQ："+req.Question)
 	utils.Success(c, "创建成功", faq)
 }
 
@@ -1280,6 +1405,7 @@ func (ctrl *AdminController) UpdateFAQ(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "更新失败: "+err.Error())
 		return
 	}
+	ctrl.writeAuditLog(c, "update_faq", "faq", uint(id), "更新FAQ")
 	utils.Success(c, "更新成功", nil)
 }
 
@@ -1295,6 +1421,7 @@ func (ctrl *AdminController) DeleteFAQ(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "删除失败: "+err.Error())
 		return
 	}
+	ctrl.writeAuditLog(c, "delete_faq", "faq", uint(id), "删除FAQ")
 	utils.Success(c, "删除成功", nil)
 }
 
@@ -1312,6 +1439,227 @@ func (ctrl *AdminController) GetLoginLogs(c *gin.Context) {
 		return
 	}
 	utils.Success(c, "", gin.H{"list": logs, "total": total, "page": pagination.Page, "pageSize": pagination.PageSize})
+}
+
+// GetAuditLogs 获取管理员操作审计日志
+func (ctrl *AdminController) GetAuditLogs(c *gin.Context) {
+	pagination := utils.ParsePaginationWithSize(c, 10)
+	action := c.DefaultQuery("action", "")
+	target := c.DefaultQuery("target", "")
+	keyword := c.DefaultQuery("keyword", c.DefaultQuery("search", ""))
+
+	logs, total, err := ctrl.adminService.GetAdminOperationLogs(pagination.Page, pagination.PageSize, action, target, keyword)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取审计日志失败")
+		return
+	}
+
+	items := make([]*models.AdminOperationLogResponse, 0, len(logs))
+	for i := range logs {
+		items = append(items, logs[i].ToResponse())
+	}
+	utils.Success(c, "", gin.H{"list": items, "total": total, "page": pagination.Page, "pageSize": pagination.PageSize})
+}
+
+// GetRolePermissions 获取管理员子角色权限矩阵
+func (ctrl *AdminController) GetRolePermissions(c *gin.Context) {
+	data, err := ctrl.adminService.GetAdminRolePermissions(c.GetUint("userId"))
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取角色权限失败")
+		return
+	}
+	utils.Success(c, "", data)
+}
+
+// GetMyAdminPermissions 获取当前管理员自身权限，用于前端菜单裁剪。
+func (ctrl *AdminController) GetMyAdminPermissions(c *gin.Context) {
+	data, err := ctrl.adminService.GetCurrentAdminPermissions(c.GetUint("userId"))
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取当前权限失败")
+		return
+	}
+	utils.Success(c, "", data)
+}
+
+type AssignAdminRoleRequest struct {
+	RoleKey string `json:"role_key" binding:"required"`
+}
+
+type AdminRoleMutationRequest struct {
+	Key         string   `json:"key"`
+	Name        string   `json:"name" binding:"required"`
+	Description string   `json:"description"`
+	Permissions []string `json:"permissions" binding:"required"`
+}
+
+type UpdateAdminRoleStatusRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+type BatchAssignAdminRoleRequest struct {
+	UserIDs []uint `json:"user_ids" binding:"required"`
+	RoleKey string `json:"role_key" binding:"required"`
+}
+
+// CreateAdminRole 创建自定义管理员子角色
+func (ctrl *AdminController) CreateAdminRole(c *gin.Context) {
+	var req AdminRoleMutationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	role, err := ctrl.adminService.CreateAdminRole(services.AdminRoleMutationRequest{
+		Key:         req.Key,
+		Name:        req.Name,
+		Description: req.Description,
+		Permissions: req.Permissions,
+	})
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "创建角色失败: "+err.Error())
+		return
+	}
+
+	detailBytes, _ := json.Marshal(role)
+	ctrl.writeAuditLog(c, "create_admin_role", "admin_role", 0, string(detailBytes))
+	utils.Success(c, "角色已创建", role)
+}
+
+// UpdateAdminRole 更新自定义管理员子角色权限
+func (ctrl *AdminController) UpdateAdminRole(c *gin.Context) {
+	roleKey := strings.TrimSpace(c.Param("roleKey"))
+	if roleKey == "" {
+		utils.Error(c, http.StatusBadRequest, "无效的角色标识")
+		return
+	}
+
+	var req AdminRoleMutationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	role, err := ctrl.adminService.UpdateAdminRole(roleKey, services.AdminRoleMutationRequest{
+		Key:         req.Key,
+		Name:        req.Name,
+		Description: req.Description,
+		Permissions: req.Permissions,
+	})
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "更新角色失败: "+err.Error())
+		return
+	}
+
+	detailBytes, _ := json.Marshal(role)
+	ctrl.writeAuditLog(c, "update_admin_role", "admin_role", 0, string(detailBytes))
+	utils.Success(c, "角色已更新", role)
+}
+
+// UpdateAdminRoleStatus 启用或禁用自定义管理员子角色
+func (ctrl *AdminController) UpdateAdminRoleStatus(c *gin.Context) {
+	roleKey := strings.TrimSpace(c.Param("roleKey"))
+	if roleKey == "" {
+		utils.Error(c, http.StatusBadRequest, "无效的角色标识")
+		return
+	}
+
+	var req UpdateAdminRoleStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	role, err := ctrl.adminService.UpdateAdminRoleStatus(roleKey, req.Enabled)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "更新角色状态失败: "+err.Error())
+		return
+	}
+
+	detailBytes, _ := json.Marshal(role)
+	ctrl.writeAuditLog(c, "update_admin_role_status", "admin_role", 0, string(detailBytes))
+	utils.Success(c, "角色状态已更新", role)
+}
+
+// AssignAdminRole 给管理员账号分配子角色
+func (ctrl *AdminController) AssignAdminRole(c *gin.Context) {
+	userID, err := strconv.ParseUint(c.Param("userId"), 10, 32)
+	if err != nil || userID == 0 {
+		utils.Error(c, http.StatusBadRequest, "无效的用户ID")
+		return
+	}
+
+	var req AssignAdminRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := ctrl.adminService.AssignAdminRole(uint(userID), req.RoleKey, c.GetUint("userId"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "分配角色失败: "+err.Error())
+		return
+	}
+	detailBytes, _ := json.Marshal(result)
+	ctrl.writeAuditLog(c, "assign_admin_role", "admin_user_role", uint(userID), string(detailBytes))
+	utils.Success(c, "角色已分配", result)
+}
+
+// BatchAssignAdminRole 批量给管理员账号分配子角色
+func (ctrl *AdminController) BatchAssignAdminRole(c *gin.Context) {
+	var req BatchAssignAdminRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	results, err := ctrl.adminService.BatchAssignAdminRole(req.UserIDs, req.RoleKey, c.GetUint("userId"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "批量分配角色失败: "+err.Error())
+		return
+	}
+
+	for _, result := range results {
+		detailBytes, _ := json.Marshal(result)
+		ctrl.writeAuditLog(c, "assign_admin_role", "admin_user_role", result.TargetUserID, string(detailBytes))
+	}
+
+	utils.Success(c, "角色已批量分配", gin.H{"list": results, "total": len(results)})
+}
+
+// GetAdminRoleAssignmentHistory 获取管理员子角色授权历史
+func (ctrl *AdminController) GetAdminRoleAssignmentHistory(c *gin.Context) {
+	pagination := utils.ParsePaginationWithSize(c, 10)
+	var targetUserID uint
+	if rawTargetUserID := strings.TrimSpace(c.Query("target_user_id")); rawTargetUserID != "" {
+		parsed, err := strconv.ParseUint(rawTargetUserID, 10, 32)
+		if err != nil {
+			utils.Error(c, http.StatusBadRequest, "无效的管理员用户ID")
+			return
+		}
+		targetUserID = uint(parsed)
+	}
+
+	data, err := ctrl.adminService.GetAdminRoleAssignmentHistory(pagination.Page, pagination.PageSize, targetUserID)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取授权历史失败")
+		return
+	}
+	utils.Success(c, "", data)
+}
+
+// GetExceptions 获取异常管控列表
+func (ctrl *AdminController) GetExceptions(c *gin.Context) {
+	pagination := utils.ParsePaginationWithSize(c, 10)
+	status := c.DefaultQuery("status", "")
+	source := c.DefaultQuery("source", "")
+	severity := c.DefaultQuery("severity", "")
+
+	data, err := ctrl.adminService.GetExceptions(pagination.Page, pagination.PageSize, status, source, severity)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取异常列表失败")
+		return
+	}
+	utils.Success(c, "", data)
 }
 
 // GetLoginLogStats 获取登录日志统计

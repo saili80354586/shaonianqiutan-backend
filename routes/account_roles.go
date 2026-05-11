@@ -17,7 +17,7 @@ func SetupAccountRoleRoutes(r *gin.RouterGroup, accountRoleController *controlle
 	admin := r.Group("/admin/role-applications")
 	admin.Use(middleware.AuthMiddleware(), middleware.AdminRoleMiddleware())
 	{
-		admin.GET("", accountRoleController.ListAdminApplications)
-		admin.POST("/:id/review", accountRoleController.ReviewRoleApplication)
+		admin.GET("", middleware.AdminPermissionMiddleware("applications.review"), accountRoleController.ListAdminApplications)
+		admin.POST("/:id/review", middleware.AdminPermissionMiddleware("applications.review"), accountRoleController.ReviewRoleApplication)
 	}
 }
