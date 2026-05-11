@@ -147,6 +147,19 @@ func TestGenerateVideoAnalysisPDFReportCreatesPdf(t *testing.T) {
 	}
 }
 
+func TestReportGeneratorUsesPackagedBrandAssetsByDefault(t *testing.T) {
+	t.Setenv("REPORT_BRAND_LOGO_LIGHT", "")
+	t.Setenv("REPORT_BRAND_LOGO_ICON", "")
+
+	assets := NewReportGenerator(t.TempDir()).brandAssets()
+	if !strings.HasSuffix(assets.WideLightLogo, defaultBrandWideLightLogo) {
+		t.Fatalf("wide logo = %q, want packaged asset suffix %q", assets.WideLightLogo, defaultBrandWideLightLogo)
+	}
+	if !strings.HasSuffix(assets.IconLogo, defaultBrandIconLogo) {
+		t.Fatalf("icon logo = %q, want packaged asset suffix %q", assets.IconLogo, defaultBrandIconLogo)
+	}
+}
+
 func intPtr(value int) *int {
 	return &value
 }

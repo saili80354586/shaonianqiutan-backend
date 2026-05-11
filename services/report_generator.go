@@ -25,12 +25,14 @@ type ReportGenerator struct {
 }
 
 const (
-	defaultBrandWideLightLogo = "/Users/saili/Desktop/少年球探/少年球探logo 白色背景.png"
-	defaultBrandIconLogo      = "/Users/saili/Desktop/少年球探/官网logo2.png"
+	defaultBrandWideLightLogo = "assets/report/brand-wide-light.png"
+	defaultBrandIconLogo      = "assets/report/brand-icon.png"
+	legacyBrandWideLightLogo  = "/Users/saili/Desktop/少年球探/少年球探logo 白色背景.png"
+	legacyBrandIconLogo       = "/Users/saili/Desktop/少年球探/官网logo2.png"
 )
 
 // VideoAnalysisDocumentTemplateVersion marks the Word/PDF rendering template.
-const VideoAnalysisDocumentTemplateVersion = "video-analysis-document-v1.4-2026-05-10"
+const VideoAnalysisDocumentTemplateVersion = "video-analysis-document-v1.5-2026-05-10"
 
 type reportBrandAssets struct {
 	WideLightLogo string
@@ -63,8 +65,8 @@ func (g *ReportGenerator) EnsureDir() error {
 
 func (g *ReportGenerator) brandAssets() reportBrandAssets {
 	return reportBrandAssets{
-		WideLightLogo: firstExistingReportAsset(os.Getenv("REPORT_BRAND_LOGO_LIGHT"), defaultBrandWideLightLogo),
-		IconLogo:      firstExistingReportAsset(os.Getenv("REPORT_BRAND_LOGO_ICON"), defaultBrandIconLogo),
+		WideLightLogo: firstExistingReportAsset(os.Getenv("REPORT_BRAND_LOGO_LIGHT"), defaultBrandWideLightLogo, legacyBrandWideLightLogo),
+		IconLogo:      firstExistingReportAsset(os.Getenv("REPORT_BRAND_LOGO_ICON"), defaultBrandIconLogo, legacyBrandIconLogo),
 	}
 }
 
@@ -95,11 +97,20 @@ func firstExistingReportAsset(paths ...string) string {
 		if path == "" {
 			continue
 		}
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return path
+		for _, candidate := range reportAssetCandidates(path) {
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				return candidate
+			}
 		}
 	}
 	return ""
+}
+
+func reportAssetCandidates(path string) []string {
+	if filepath.IsAbs(path) {
+		return []string{path}
+	}
+	return []string{path, filepath.Join("..", path)}
 }
 
 // GenerateReportDocs 生成两份 MD 文档，返回 (评分报告路径, 球员基础信息路径, error)
