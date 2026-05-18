@@ -328,6 +328,7 @@ func (c *WeeklyReportController) GetPeriods(ctx *gin.Context) {
 	for i, p := range periods {
 		list[i] = p.ToResponse()
 	}
+	c.attachTrainingPlansToWeeklyPeriods(list)
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -337,6 +338,44 @@ func (c *WeeklyReportController) GetPeriods(ctx *gin.Context) {
 			"page":  page,
 		},
 	})
+}
+
+func (c *WeeklyReportController) attachTrainingPlansToWeeklyPeriods(list []models.WeeklyReportPeriodResponse) {
+	if c.db == nil || len(list) == 0 {
+		return
+	}
+	for i := range list {
+		weekStart, err := time.Parse("2006-01-02", list[i].WeekStart)
+		if err != nil {
+			continue
+		}
+		weekEnd, err := time.Parse("2006-01-02", list[i].WeekEnd)
+		if err != nil {
+			continue
+		}
+		var plans []models.TrainingPlan
+		if err := c.db.
+			Where("team_id = ? AND start_time >= ? AND start_time < ?", list[i].TeamID, weekStart, weekEnd.AddDate(0, 0, 1)).
+			Order("start_time ASC").
+			Find(&plans).Error; err != nil {
+			continue
+		}
+		list[i].TrainingPlans = make([]models.WeeklyPeriodTrainingPlanResponse, 0, len(plans))
+		for _, plan := range plans {
+			item := models.WeeklyPeriodTrainingPlanResponse{
+				ID:        plan.ID,
+				Title:     plan.Title,
+				Theme:     plan.Theme,
+				Location:  plan.Location,
+				StartTime: plan.StartTime.Format(time.RFC3339),
+				Status:    string(plan.Status),
+			}
+			if plan.EndTime != nil {
+				item.EndTime = plan.EndTime.Format(time.RFC3339)
+			}
+			list[i].TrainingPlans = append(list[i].TrainingPlans, item)
+		}
+	}
 }
 
 // GetPeriodStats 获取周期统计信息

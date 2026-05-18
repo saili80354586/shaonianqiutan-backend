@@ -17,6 +17,11 @@ type ClubHome struct {
 	NewsItems        []ClubHomeNewsItem  `json:"newsItems" gorm:"serializer:json"`
 	ModuleOrder      string              `json:"moduleOrder" gorm:"type:text"`
 	ModuleVisibility map[string]bool     `json:"moduleVisibility" gorm:"serializer:json"`
+	TemplateType     string              `json:"templateType" gorm:"size:32;default:''"`
+	PublishStatus    string              `json:"publishStatus" gorm:"size:20;default:'draft'"`
+	PublishedAt      *time.Time          `json:"publishedAt"`
+	CompletionScore  int                 `json:"completionScore" gorm:"default:0"`
+	ShareSlug        string              `json:"shareSlug" gorm:"size:80;index"`
 	CreatedAt        time.Time           `json:"created_at"`
 	UpdatedAt        time.Time           `json:"updated_at"`
 }
@@ -83,6 +88,28 @@ type ClubHomeRecruitment struct {
 	ContactPhone  string `json:"contactPhone"`
 	ContactWechat string `json:"contactWechat"`
 	QRCode        string `json:"qrCode"`
+}
+
+// ClubHomeInquiry 俱乐部公开主页咨询线索
+type ClubHomeInquiry struct {
+	ID            uint      `json:"id" gorm:"primaryKey"`
+	ClubID        uint      `json:"club_id" gorm:"index;not null"`
+	UserID        *uint     `json:"user_id" gorm:"index"`
+	Name          string    `json:"name" gorm:"size:100;not null"`
+	Phone         string    `json:"phone" gorm:"size:50;not null"`
+	Wechat        string    `json:"wechat" gorm:"size:100"`
+	PlayerAge     int       `json:"playerAge"`
+	AgeGroup      string    `json:"ageGroup" gorm:"size:50"`
+	PreferredTime string    `json:"preferredTime" gorm:"size:120"`
+	Message       string    `json:"message" gorm:"size:500"`
+	Source        string    `json:"source" gorm:"size:50;default:'club_home'"`
+	Status        string    `json:"status" gorm:"size:30;default:'pending';index"` // pending, contacted, converted, closed
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+func (ClubHomeInquiry) TableName() string {
+	return "club_home_inquiries"
 }
 
 // ClubHomeSocialLinks 社交媒体链接
@@ -179,6 +206,7 @@ func DefaultClubHome(clubID uint) *ClubHome {
 		},
 		ModuleOrder:      "[\"hero\",\"about\",\"achievements\",\"teams\",\"coaches\",\"players\",\"facilities\",\"news\",\"activities\",\"recruitment\",\"contact\"]",
 		ModuleVisibility: DefaultModuleVisibility,
+		PublishStatus:    "draft",
 	}
 }
 

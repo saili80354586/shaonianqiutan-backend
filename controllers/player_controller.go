@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -658,6 +659,198 @@ func (ctrl *PlayerController) DeletePhysicalTest(c *gin.Context) {
 	}
 
 	utils.Success(c, "体测记录已删除", nil)
+}
+
+// GetTeamCalendar 获取球员所属球队的只读日历
+func (ctrl *PlayerController) GetTeamCalendar(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		utils.Error(c, http.StatusUnauthorized, "未认证")
+		return
+	}
+
+	startDate, endDate := parseCalendarRange(c.Query("startDate"), c.Query("endDate"))
+	typeSet := parseCalendarTypes(c.Query("types"))
+	statusFilter := strings.TrimSpace(c.Query("status"))
+	teamIDQuery := strings.TrimSpace(c.Query("teamId"))
+
+	query := ctrl.db.Preload("Team.Club").
+		Where("user_id = ? AND status = ?", userID, "active").
+		Order("joined_at DESC, id DESC")
+	if teamIDQuery != "" {
+		teamID, err := strconv.ParseUint(teamIDQuery, 10, 32)
+		if err != nil {
+			utils.ValidationError(c, "无效的球队ID")
+			return
+		}
+		query = query.Where("team_id = ?", uint(teamID))
+	}
+
+	var memberships []models.TeamPlayer
+	if err := query.Find(&memberships).Error; err != nil {
+		utils.ServerError(c, "获取球队日历失败")
+		return
+	}
+
+	teams := make([]gin.H, 0, len(memberships))
+	items := make([]gin.H, 0)
+	stats := gin.H{
+		"trainingCount":           0,
+		"matchCount":              0,
+		"physicalTestCount":       0,
+		"weeklyPeriodCount":       0,
+		"weeklyPendingCount":      0,
+		"matchReviewPendingCount": 0,
+	}
+
+	teamCtrl := &TeamController{db: ctrl.db}
+	for _, membership := range memberships {
+		if membership.Team == nil {
+			continue
+		}
+		team := membership.Team
+		clubName := ""
+		if team.Club != nil {
+			clubName = team.Club.Name
+		}
+		teams = append(teams, gin.H{
+			"id":           team.ID,
+			"name":         team.Name,
+			"ageGroup":     team.AgeGroup,
+			"clubId":       team.ClubID,
+			"clubName":     clubName,
+			"jerseyNumber": membership.JerseyNumber,
+			"position":     membership.Position,
+		})
+
+		payload, err := teamCtrl.buildTeamCalendarPayload(team.ID, team.ClubID, startDate, endDate, typeSet, statusFilter, "player")
+		if err != nil {
+			utils.ServerError(c, err.Error())
+			return
+		}
+		for _, rawItem := range payload["items"].([]gin.H) {
+			ctrl.enrichPlayerCalendarLinks(rawItem, userID)
+			rawItem["teamName"] = team.Name
+			rawItem["clubName"] = clubName
+			items = append(items, rawItem)
+		}
+		if payloadStats, ok := payload["stats"].(gin.H); ok {
+			accumulateCalendarStats(stats, payloadStats)
+		}
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		left, _ := time.Parse(time.RFC3339, fmt.Sprint(items[i]["startTime"]))
+		right, _ := time.Parse(time.RFC3339, fmt.Sprint(items[j]["startTime"]))
+		return left.Before(right)
+	})
+
+	var currentTeamID uint
+	if len(teams) > 0 {
+		currentTeamID, _ = teams[0]["id"].(uint)
+	}
+
+	utils.SuccessResponse(c, gin.H{
+		"teamId": currentTeamID,
+		"teams":  teams,
+		"range": gin.H{
+			"startDate": startDate.Format("2006-01-02"),
+			"endDate":   endDate.AddDate(0, 0, -1).Format("2006-01-02"),
+		},
+		"items": items,
+		"stats": stats,
+	})
+}
+
+func (ctrl *PlayerController) enrichPlayerCalendarLinks(item gin.H, playerID uint) {
+	links, ok := item["links"].(gin.H)
+	if !ok {
+		links = gin.H{}
+		item["links"] = links
+	}
+
+	sourceID := calendarItemUint(item["sourceId"])
+	switch fmt.Sprint(item["type"]) {
+	case "weekly":
+		links["weeklyPeriodId"] = sourceID
+		if sourceID == 0 {
+			return
+		}
+		var period models.WeeklyReportPeriod
+		if err := ctrl.db.Select("id, team_id, week_start").
+			First(&period, sourceID).Error; err != nil {
+			links["weeklyReportId"] = nil
+			return
+		}
+		var report models.WeeklyReport
+		if err := ctrl.db.Select("id").
+			Where("team_id = ? AND player_id = ? AND week_start = ?", period.TeamID, playerID, period.WeekStart).
+			First(&report).Error; err != nil {
+			links["weeklyReportId"] = nil
+			return
+		}
+		links["weeklyReportId"] = report.ID
+	case "physical":
+		links["physicalActivityId"] = sourceID
+		if sourceID == 0 {
+			return
+		}
+		var record models.PhysicalTestRecord
+		if err := ctrl.db.Select("id").
+			Where("player_id = ? AND activity_id = ?", playerID, sourceID).
+			Order("test_date DESC, created_at DESC").
+			First(&record).Error; err == nil {
+			links["physicalRecordId"] = record.ID
+		} else {
+			links["physicalRecordId"] = nil
+		}
+	}
+}
+
+func calendarItemUint(value interface{}) uint {
+	switch typed := value.(type) {
+	case uint:
+		return typed
+	case int:
+		if typed > 0 {
+			return uint(typed)
+		}
+	case int64:
+		if typed > 0 {
+			return uint(typed)
+		}
+	case float64:
+		if typed > 0 {
+			return uint(typed)
+		}
+	}
+	return 0
+}
+
+func accumulateCalendarStats(target gin.H, source gin.H) {
+	for _, key := range []string{
+		"trainingCount",
+		"matchCount",
+		"physicalTestCount",
+		"weeklyPeriodCount",
+		"weeklyPendingCount",
+		"matchReviewPendingCount",
+	} {
+		target[key] = calendarStatInt(target[key]) + calendarStatInt(source[key])
+	}
+}
+
+func calendarStatInt(value interface{}) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case uint:
+		return int(typed)
+	default:
+		return 0
+	}
 }
 
 // GetPlayerPublicProfile 获取球员公开资料（无需登录）

@@ -85,6 +85,7 @@ func newOrderFlowFixture(t *testing.T) *orderFlowFixture {
 			nil,
 			nil,
 			nil,
+			nil,
 			assignmentRepo,
 			statusHistoryRepo,
 		),
@@ -414,5 +415,11 @@ func TestAdminGetPendingReportsReturnsProcessingReports(t *testing.T) {
 	}
 	if total != 1 || len(reports) != 1 || reports[0].ID != report.ID {
 		t.Fatalf("expected one pending report %d, got total=%d list=%v", report.ID, total, reports)
+	}
+	if reports[0].Analyst == nil {
+		t.Fatalf("expected pending report analyst summary")
+	}
+	if reports[0].Analyst.ID != fx.analyst.ID || reports[0].Analyst.Name != fx.analyst.Name || reports[0].Analyst.Phone != "13910000003" {
+		t.Fatalf("unexpected analyst summary: %#v", reports[0].Analyst)
 	}
 }

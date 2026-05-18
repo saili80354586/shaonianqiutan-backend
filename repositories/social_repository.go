@@ -1,6 +1,8 @@
 package repositories
 
 import (
+	"strings"
+
 	"github.com/shaonianqiutan/backend/models"
 	"gorm.io/gorm"
 )
@@ -547,18 +549,28 @@ func (r *SocialRepository) DeletePost(postID uint) error {
 }
 
 // GetFeedPosts 获取动态流列表
-func (r *SocialRepository) GetFeedPosts(roleTag string, page, pageSize int) ([]models.Post, int64, error) {
+func (r *SocialRepository) GetFeedPosts(roleTag string, province string, city string, page, pageSize int) ([]models.Post, int64, error) {
 	var posts []models.Post
 	var total int64
 
-	query := r.db.Model(&models.Post{})
+	query := r.db.Model(&models.Post{}).Joins("LEFT JOIN users ON users.id = posts.user_id")
 	if roleTag != "" && roleTag != "all" {
-		query = query.Where("role_tag = ?", roleTag)
+		if roleTag == "scout_analyst" {
+			query = query.Where("(posts.role_tag IN ? OR users.role IN ?)", []string{"scout", "analyst"}, []string{"scout", "analyst"})
+		} else {
+			query = query.Where("(posts.role_tag = ? OR users.role = ?)", roleTag, roleTag)
+		}
+	}
+	if province = strings.TrimSpace(province); province != "" {
+		query = query.Where("users.province LIKE ?", "%"+province+"%")
+	}
+	if city = strings.TrimSpace(city); city != "" {
+		query = query.Where("users.city LIKE ?", "%"+city+"%")
 	}
 	query.Count(&total)
 
 	err := query.Preload("User").
-		Order("is_top DESC, created_at DESC").
+		Order("posts.is_top DESC, posts.created_at DESC").
 		Limit(pageSize).Offset((page - 1) * pageSize).
 		Find(&posts).Error
 	return posts, total, err

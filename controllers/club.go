@@ -686,7 +686,62 @@ func (c *ClubController) GetPlayerDetail(ctx *gin.Context) {
 		physicalReportList = append(physicalReportList, c.formatPhysicalReportItem(report))
 	}
 
-	// 6. 球探报告
+	// 6. 训练计划
+	var teamPlayers []models.TeamPlayer
+	c.db.Preload("Team").
+		Joins("JOIN teams ON teams.id = team_players.team_id").
+		Where("team_players.user_id = ? AND team_players.status = ? AND teams.club_id = ?", playerUserID, "active", club.ID).
+		Find(&teamPlayers)
+
+	teamIDs := make([]uint, 0, len(teamPlayers))
+	teamNameMap := make(map[uint]string, len(teamPlayers))
+	for _, teamPlayer := range teamPlayers {
+		teamIDs = append(teamIDs, teamPlayer.TeamID)
+		if teamPlayer.Team != nil {
+			teamNameMap[teamPlayer.TeamID] = teamPlayer.Team.Name
+		}
+	}
+
+	trainingPlanList := make([]gin.H, 0)
+	if len(teamIDs) > 0 {
+		var trainingPlans []models.TrainingPlan
+		c.db.Preload("Coach").
+			Where("club_id = ? AND team_id IN ?", club.ID, teamIDs).
+			Order("start_time DESC, created_at DESC").
+			Limit(80).
+			Find(&trainingPlans)
+		for _, plan := range trainingPlans {
+			if !trainingPlanIncludesPlayer(plan, playerUserID) {
+				continue
+			}
+			coachName := ""
+			if plan.Coach != nil {
+				coachName = plan.Coach.Name
+			}
+			trainingPlanList = append(trainingPlanList, gin.H{
+				"id":             plan.ID,
+				"teamId":         plan.TeamID,
+				"teamName":       teamNameMap[plan.TeamID],
+				"title":          plan.Title,
+				"theme":          plan.Theme,
+				"location":       plan.Location,
+				"startTime":      plan.StartTime.Format(time.RFC3339),
+				"endTime":        utils.FormatTime(plan.EndTime),
+				"content":        plan.Content,
+				"summary":        plan.Summary,
+				"status":         plan.Status,
+				"coachName":      coachName,
+				"weeklyReportId": plan.WeeklyReportID,
+				"physicalTestId": plan.PhysicalTestID,
+				"createdAt":      utils.FormatDateTime(plan.CreatedAt),
+			})
+			if len(trainingPlanList) >= 20 {
+				break
+			}
+		}
+	}
+
+	// 7. 球探报告
 	var scoutReports []models.ScoutReport
 	c.db.Where("player_id = ?", playerUserID).Order("created_at DESC").Limit(20).Find(&scoutReports)
 	scoutReportList := make([]gin.H, 0, len(scoutReports))
@@ -705,7 +760,7 @@ func (c *ClubController) GetPlayerDetail(ctx *gin.Context) {
 		})
 	}
 
-	// 6. 成长记录时间线（合并所有类型）
+	// 8. 成长记录时间线（合并所有类型）
 	growthRecords := make([]gin.H, 0)
 	for _, o := range orders {
 		growthRecords = append(growthRecords, gin.H{
@@ -740,6 +795,15 @@ func (c *ClubController) GetPlayerDetail(ctx *gin.Context) {
 			"type":    "physical_test",
 			"title":   "体测",
 			"summary": "完成体测记录",
+		})
+	}
+	for _, plan := range trainingPlanList {
+		growthRecords = append(growthRecords, gin.H{
+			"date":    plan["startTime"],
+			"type":    "training_plan",
+			"title":   "训练：" + fmt.Sprint(plan["title"]),
+			"summary": firstNonEmptyTimelineText(fmt.Sprint(plan["theme"]), fmt.Sprint(plan["summary"]), fmt.Sprint(plan["teamName"])),
+			"status":  plan["status"],
 		})
 	}
 	for _, sr := range scoutReports {
@@ -787,6 +851,7 @@ func (c *ClubController) GetPlayerDetail(ctx *gin.Context) {
 		"orders":          orderList,
 		"weeklyReports":   weeklyReportList,
 		"matchSummaries":  matchSummaryList,
+		"trainingPlans":   trainingPlanList,
 		"physicalTests":   physicalTestList,
 		"physicalReports": physicalReportList,
 		"scoutReports":    scoutReportList,
@@ -1173,6 +1238,28 @@ func (c *ClubController) formatPhysicalReportItem(report models.PhysicalTestRepo
 		"createdAt":     utils.FormatDateTime(report.CreatedAt),
 		"updatedAt":     utils.FormatDateTime(report.UpdatedAt),
 	}
+}
+
+func trainingPlanIncludesPlayer(plan models.TrainingPlan, playerUserID uint) bool {
+	playerIDs := plan.GetPlayerIDs()
+	if len(playerIDs) == 0 {
+		return true
+	}
+	for _, id := range playerIDs {
+		if id == playerUserID {
+			return true
+		}
+	}
+	return false
+}
+
+func firstNonEmptyTimelineText(values ...string) string {
+	for _, value := range values {
+		if value != "" && value != "<nil>" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (c *ClubController) getPhysicalReportForClub(reportID uint, clubID uint) (*models.PhysicalTestReport, error) {

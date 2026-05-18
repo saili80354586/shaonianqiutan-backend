@@ -13,6 +13,8 @@ func SetupAdminRoutes(r *gin.RouterGroup, adminController *controllers.AdminCont
 	{
 		admin.POST("/login", adminController.AdminLogin)
 	}
+	r.GET("/faqs", adminController.GetPublicFAQs)
+	r.GET("/help-guides", adminController.GetPublicHelpGuides)
 
 	// 需要认证的路由
 	authAdmin := r.Group("/admin")
@@ -101,6 +103,12 @@ func SetupAdminRoutes(r *gin.RouterGroup, adminController *controllers.AdminCont
 		authAdmin.POST("/faqs", perm("platform.manage"), adminController.CreateFAQ)
 		authAdmin.PUT("/faqs/:id", perm("platform.manage"), adminController.UpdateFAQ)
 		authAdmin.DELETE("/faqs/:id", perm("platform.manage"), adminController.DeleteFAQ)
+
+		// 使用指南
+		authAdmin.GET("/help-guides", perm("platform.manage"), adminController.GetHelpGuides)
+		authAdmin.POST("/help-guides", perm("platform.manage"), adminController.CreateHelpGuide)
+		authAdmin.PUT("/help-guides/:id", perm("platform.manage"), adminController.UpdateHelpGuide)
+		authAdmin.DELETE("/help-guides/:id", perm("platform.manage"), adminController.DeleteHelpGuide)
 
 		// 登录日志
 		authAdmin.GET("/login-logs", perm("login_logs.view"), adminController.GetLoginLogs)

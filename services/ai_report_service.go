@@ -106,7 +106,7 @@ func NewAIService(config AIConfig) *AIService {
 	return &AIService{
 		config: config,
 		client: &http.Client{
-			Timeout: 180 * time.Second,
+			Timeout: 360 * time.Second,
 		},
 	}
 }

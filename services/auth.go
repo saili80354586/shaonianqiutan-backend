@@ -392,6 +392,11 @@ func (s *AuthService) Register(req *RegisterRequest) (*LoginResponse, error) {
 	if age <= 0 {
 		age = calculateAgeFromBirthDate(req.BirthDate)
 	}
+	name := strings.TrimSpace(req.Name)
+	nickname := strings.TrimSpace(req.Nickname)
+	if nickname == "" {
+		nickname = name
+	}
 
 	// 创建用户
 	user := &models.User{
@@ -399,8 +404,8 @@ func (s *AuthService) Register(req *RegisterRequest) (*LoginResponse, error) {
 		Password:       string(hashedPassword),
 		Role:           userRole,
 		Status:         userStatus,
-		Name:           req.Name,
-		Nickname:       req.Nickname,
+		Name:           name,
+		Nickname:       nickname,
 		BirthDate:      req.BirthDate,
 		Age:            age,
 		Gender:         req.Gender,

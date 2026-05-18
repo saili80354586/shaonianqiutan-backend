@@ -119,6 +119,40 @@ func TestAnalystRegisterCreatesActiveLoginReadyAnalystProfile(t *testing.T) {
 	}
 }
 
+func TestRegisterDefaultsNicknameToRealNameWhenMissing(t *testing.T) {
+	authService, smsService, db := setupAuthRegisterTestService(t)
+	phone := "13900007777"
+	code := "123456"
+	if _, err := smsService.CreateCode(phone, code, models.SmsCodeTypeRegister); err != nil {
+		t.Fatalf("create sms code: %v", err)
+	}
+
+	result, err := authService.Register(&RegisterRequest{
+		Phone:    phone,
+		Code:     code,
+		Password: "123456",
+		Role:     "player",
+		Name:     "只填姓名球员",
+	})
+	if err != nil {
+		t.Fatalf("register player: %v", err)
+	}
+	if result == nil || result.User == nil {
+		t.Fatalf("register result = %#v, want user", result)
+	}
+	if result.User.Nickname != "只填姓名球员" {
+		t.Fatalf("nickname = %q, want real name fallback", result.User.Nickname)
+	}
+
+	var stored models.User
+	if err := db.First(&stored, result.User.ID).Error; err != nil {
+		t.Fatalf("find stored user: %v", err)
+	}
+	if stored.Nickname != "只填姓名球员" {
+		t.Fatalf("stored nickname = %q, want real name fallback", stored.Nickname)
+	}
+}
+
 func TestAnalystRegisterCreatesAssignedDefaultDemoOrderWhenEnabled(t *testing.T) {
 	authService, smsService, db := setupAuthRegisterTestService(t)
 

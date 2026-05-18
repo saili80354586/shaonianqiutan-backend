@@ -7,13 +7,13 @@ import (
 
 // WeeklyReport 球员周报
 type WeeklyReport struct {
-	ID              uint      `gorm:"primaryKey" json:"id"`
-	TeamID          uint      `gorm:"index;not null" json:"teamId"`
-	PlayerID        uint      `gorm:"index;not null" json:"playerId"`
-	CoachID         uint      `gorm:"not null" json:"coachId"`
-	WeekStart       time.Time `gorm:"type:date;not null" json:"weekStart"` // 周起始日期(周一)
-	WeekEnd         time.Time `gorm:"type:date;not null" json:"weekEnd"`   // 周结束日期(周日)
-	Deadline        *time.Time `gorm:"type:datetime" json:"deadline"`      // 填写截止时间
+	ID        uint       `gorm:"primaryKey" json:"id"`
+	TeamID    uint       `gorm:"index;not null" json:"teamId"`
+	PlayerID  uint       `gorm:"index;not null" json:"playerId"`
+	CoachID   uint       `gorm:"not null" json:"coachId"`
+	WeekStart time.Time  `gorm:"type:date;not null" json:"weekStart"` // 周起始日期(周一)
+	WeekEnd   time.Time  `gorm:"type:date;not null" json:"weekEnd"`   // 周结束日期(周日)
+	Deadline  *time.Time `gorm:"type:datetime" json:"deadline"`       // 填写截止时间
 
 	// ==================== 球员自评 ====================
 
@@ -24,11 +24,11 @@ type WeeklyReport struct {
 	AbsenceReason    string `gorm:"type:text" json:"absenceReason"`    // 请假原因
 
 	// 训练内容反馈（扩展）
-	KnowledgeSummary   string `gorm:"type:text" json:"knowledgeSummary"`   // 本周训练知识点总结 ⭐
-	TechnicalContent   string `gorm:"type:text" json:"technicalContent"`   // 技术训练内容
-	TacticalContent    string `gorm:"type:text" json:"tacticalContent"`    // 战术训练内容
-	PhysicalCondition  string `gorm:"type:text" json:"physicalCondition"`  // 体能训练情况
-	MatchPerformance   string `gorm:"type:text" json:"matchPerformance"`   // 比赛/对抗表现
+	KnowledgeSummary  string `gorm:"type:text" json:"knowledgeSummary"`  // 本周训练知识点总结 ⭐
+	TechnicalContent  string `gorm:"type:text" json:"technicalContent"`  // 技术训练内容
+	TacticalContent   string `gorm:"type:text" json:"tacticalContent"`   // 战术训练内容
+	PhysicalCondition string `gorm:"type:text" json:"physicalCondition"` // 体能训练情况
+	MatchPerformance  string `gorm:"type:text" json:"matchPerformance"`  // 比赛/对抗表现
 
 	// 自我评价 - 多维度评分（新增）
 	SelfAttitudeRating  int    `gorm:"default:0" json:"selfAttitudeRating"`  // 训练态度自评 1-5
@@ -45,7 +45,7 @@ type WeeklyReport struct {
 
 	// 其他信息（新增）
 	MessageToCoach string `gorm:"type:text" json:"messageToCoach"` // 想对教练说的话
-	Attachments    string `gorm:"type:text" json:"attachments"`      // 附件JSON数组
+	Attachments    string `gorm:"type:text" json:"attachments"`    // 附件JSON数组
 
 	// 提交状态
 	SubmitStatus string     `gorm:"type:varchar(20);default:'draft'" json:"submitStatus"` // draft/submitted/overdue
@@ -54,10 +54,10 @@ type WeeklyReport struct {
 	// ==================== 教练审核 ====================
 
 	// 教练评价 - 多维度评分（新增）
-	CoachAttitudeRating   int `gorm:"default:0" json:"coachAttitudeRating"`   // 训练态度评分 1-5
-	CoachTechniqueRating  int `gorm:"default:0" json:"coachTechniqueRating"`  // 技术执行评分 1-5
-	CoachTacticsRating    int `gorm:"default:0" json:"coachTacticsRating"`    // 战术理解评分 1-5
-	CoachKnowledgeRating  int `gorm:"default:0" json:"coachKnowledgeRating"`  // 知识点掌握度 1-5
+	CoachAttitudeRating  int `gorm:"default:0" json:"coachAttitudeRating"`  // 训练态度评分 1-5
+	CoachTechniqueRating int `gorm:"default:0" json:"coachTechniqueRating"` // 技术执行评分 1-5
+	CoachTacticsRating   int `gorm:"default:0" json:"coachTacticsRating"`   // 战术理解评分 1-5
+	CoachKnowledgeRating int `gorm:"default:0" json:"coachKnowledgeRating"` // 知识点掌握度 1-5
 
 	// 教练评语（扩展）
 	ReviewStatus            string     `gorm:"type:varchar(20);default:'pending'" json:"reviewStatus"` // pending/approved/rejected
@@ -86,18 +86,18 @@ func (WeeklyReport) TableName() string {
 
 // WeeklyReportResponse 周报响应结构
 type WeeklyReportResponse struct {
-	ID              uint   `json:"id"`
-	ReportID        uint   `json:"reportId"` // 兼容前端PlayerReportStatus接口
-	TeamID          uint   `json:"teamId"`
-	TeamName        string `json:"teamName"`
-	PlayerID        uint   `json:"playerId"`
-	PlayerName      string `json:"playerName"`
-	CoachID         uint   `json:"coachId"`
-	CoachName       string `json:"coachName"`
-	WeekStart       string `json:"weekStart"`
-	WeekEnd         string `json:"weekEnd"`
-	WeekLabel       string `json:"weekLabel"` // 如 "2026年第14周"
-	Deadline        string `json:"deadline"`  // 填写截止时间
+	ID         uint   `json:"id"`
+	ReportID   uint   `json:"reportId"` // 兼容前端PlayerReportStatus接口
+	TeamID     uint   `json:"teamId"`
+	TeamName   string `json:"teamName"`
+	PlayerID   uint   `json:"playerId"`
+	PlayerName string `json:"playerName"`
+	CoachID    uint   `json:"coachId"`
+	CoachName  string `json:"coachName"`
+	WeekStart  string `json:"weekStart"`
+	WeekEnd    string `json:"weekEnd"`
+	WeekLabel  string `json:"weekLabel"` // 如 "2026年第14周"
+	Deadline   string `json:"deadline"`  // 填写截止时间
 
 	// ==================== 球员自评 ====================
 
@@ -163,15 +163,15 @@ func (w *WeeklyReport) ToResponse() WeeklyReportResponse {
 	weekLabel := fmt.Sprintf("%d年第%d周", year, week)
 
 	resp := WeeklyReportResponse{
-		ID:              w.ID,
-		ReportID:        w.ID, // 添加ReportID字段供前端使用
-		TeamID:          w.TeamID,
-		PlayerID:        w.PlayerID,
-		CoachID:         w.CoachID,
-		WeekStart:       w.WeekStart.Format("2006-01-02"),
-		WeekEnd:         w.WeekEnd.Format("2006-01-02"),
-		WeekLabel:       weekLabel,
-		SubmitStatus:    w.SubmitStatus,
+		ID:           w.ID,
+		ReportID:     w.ID, // 添加ReportID字段供前端使用
+		TeamID:       w.TeamID,
+		PlayerID:     w.PlayerID,
+		CoachID:      w.CoachID,
+		WeekStart:    w.WeekStart.Format("2006-01-02"),
+		WeekEnd:      w.WeekEnd.Format("2006-01-02"),
+		WeekLabel:    weekLabel,
+		SubmitStatus: w.SubmitStatus,
 
 		// 训练出勤情况
 		TrainingCount:    w.TrainingCount,
@@ -203,10 +203,10 @@ func (w *WeeklyReport) ToResponse() WeeklyReportResponse {
 		MessageToCoach: w.MessageToCoach,
 
 		// 教练评价 - 多维度评分
-		CoachAttitudeRating:   w.CoachAttitudeRating,
-		CoachTechniqueRating:  w.CoachTechniqueRating,
-		CoachTacticsRating:    w.CoachTacticsRating,
-		CoachKnowledgeRating:  w.CoachKnowledgeRating,
+		CoachAttitudeRating:  w.CoachAttitudeRating,
+		CoachTechniqueRating: w.CoachTechniqueRating,
+		CoachTacticsRating:   w.CoachTacticsRating,
+		CoachKnowledgeRating: w.CoachKnowledgeRating,
 
 		// 教练评语
 		ReviewStatus:            w.ReviewStatus,
@@ -281,20 +281,20 @@ type WeeklyReportSubmit struct {
 	WeekEnd   string `json:"weekEnd"`                      // 格式: 2006-01-02，默认自动计算
 
 	// ==================== 训练出勤情况 ====================
-	TrainingCount    int    `json:"trainingCount" binding:"min=0"`           // 本周训练次数
-	TrainingDuration int    `json:"trainingDuration" binding:"min=0"`        // 训练时长（分钟）
-	AbsenceCount     int    `json:"absenceCount" binding:"min=0"`            // 请假/缺勤次数
-	AbsenceReason    string `json:"absenceReason"`                             // 请假原因
+	TrainingCount    int    `json:"trainingCount" binding:"min=0"`    // 本周训练次数
+	TrainingDuration int    `json:"trainingDuration" binding:"min=0"` // 训练时长（分钟）
+	AbsenceCount     int    `json:"absenceCount" binding:"min=0"`     // 请假/缺勤次数
+	AbsenceReason    string `json:"absenceReason"`                    // 请假原因
 
 	// ==================== 训练内容反馈 ====================
 	KnowledgeSummary  string `json:"knowledgeSummary" binding:"required,min=10,max=500"` // 本周训练知识点总结 ⭐
 	TechnicalContent  string `json:"technicalContent" binding:"max=500"`                 // 技术训练内容
 	TacticalContent   string `json:"tacticalContent" binding:"max=500"`                  // 战术训练内容
 	PhysicalCondition string `json:"physicalCondition" binding:"max=300"`                // 体能训练情况
-	MatchPerformance  string `json:"matchPerformance"`                                     // 比赛/对抗表现
+	MatchPerformance  string `json:"matchPerformance"`                                   // 比赛/对抗表现
 
 	// ==================== 自我评价 - 多维度评分 ====================
-	SelfAttitudeRating  int    `json:"selfAttitudeRating" binding:"required,min=1,max=5"` // 训练态度自评 1-5
+	SelfAttitudeRating  int    `json:"selfAttitudeRating" binding:"required,min=1,max=5"`  // 训练态度自评 1-5
 	SelfTechniqueRating int    `json:"selfTechniqueRating" binding:"required,min=1,max=5"` // 技术表现自评 1-5
 	SelfTeamworkRating  int    `json:"selfTeamworkRating" binding:"required,min=1,max=5"`  // 团队协作自评 1-5
 	ImprovementsDetail  string `json:"improvementsDetail" binding:"max=300"`               // 本周进步点
@@ -302,9 +302,9 @@ type WeeklyReportSubmit struct {
 
 	// ==================== 身体状态反馈 ====================
 	FatigueLevel  int    `json:"fatigueLevel" binding:"required,min=1,max=5"` // 疲劳程度 1-5
-	Injuries      string `json:"injuries" binding:"max=200"`                    // 伤病情况
+	Injuries      string `json:"injuries" binding:"max=200"`                  // 伤病情况
 	SleepQuality  int    `json:"sleepQuality" binding:"required,min=1,max=5"` // 睡眠质量 1-5
-	DietCondition string `json:"dietCondition" binding:"max=200"`               // 饮食情况
+	DietCondition string `json:"dietCondition" binding:"max=200"`             // 饮食情况
 
 	// ==================== 其他信息 ====================
 	MessageToCoach string   `json:"messageToCoach" binding:"max=300"` // 想对教练说的话
@@ -323,7 +323,7 @@ type WeeklyReportReview struct {
 	CoachKnowledgeRating int `json:"coachKnowledgeRating" binding:"required,min=1,max=5"` // 知识点掌握度 1-5
 
 	// ==================== 教练评语 ====================
-	ReviewComment           string `json:"reviewComment" binding:"required,min=10,max=500"`          // 整体表现评价
+	ReviewComment           string `json:"reviewComment" binding:"required,min=10,max=500"`           // 整体表现评价
 	StrengthsAcknowledgment string `json:"strengthsAcknowledgment" binding:"required,min=5,max=300"`  // 优点肯定
 	Suggestions             string `json:"suggestions" binding:"required_if=Status rejected,max=500"` // 改进建议（退回时必填）
 	KnowledgeFeedback       string `json:"knowledgeFeedback" binding:"max=300"`                       // 知识点理解偏差
@@ -342,11 +342,11 @@ type CreateWeeklyReportInput struct {
 
 // WeeklyReportPeriod 周报周期（用于统计和查询）
 type WeeklyReportPeriod struct {
-	ID         uint       `gorm:"primaryKey" json:"id"`
-	TeamID     uint       `gorm:"index;not null" json:"teamId"`
-	WeekStart  time.Time  `gorm:"type:date;not null" json:"weekStart"` // 周起始日期
-	WeekEnd    time.Time  `gorm:"type:date;not null" json:"weekEnd"`   // 周结束日期
-	Deadline   *time.Time `json:"deadline"`                              // 填写截止时间
+	ID        uint       `gorm:"primaryKey" json:"id"`
+	TeamID    uint       `gorm:"index;not null" json:"teamId"`
+	WeekStart time.Time  `gorm:"type:date;not null" json:"weekStart"` // 周起始日期
+	WeekEnd   time.Time  `gorm:"type:date;not null" json:"weekEnd"`   // 周结束日期
+	Deadline  *time.Time `json:"deadline"`                            // 填写截止时间
 
 	// 统计信息
 	TotalPlayers   int `json:"totalPlayers"`   // 应填人数
@@ -369,13 +369,13 @@ func (WeeklyReportPeriod) TableName() string {
 
 // WeeklyReportPeriodResponse 周报周期响应
 type WeeklyReportPeriodResponse struct {
-	ID         uint   `json:"id"`
-	TeamID     uint   `json:"teamId"`
-	TeamName   string `json:"teamName,omitempty"`
-	WeekStart  string `json:"weekStart"`
-	WeekEnd    string `json:"weekEnd"`
-	WeekLabel  string `json:"weekLabel"`
-	Deadline   string `json:"deadline"`
+	ID        uint   `json:"id"`
+	TeamID    uint   `json:"teamId"`
+	TeamName  string `json:"teamName,omitempty"`
+	WeekStart string `json:"weekStart"`
+	WeekEnd   string `json:"weekEnd"`
+	WeekLabel string `json:"weekLabel"`
+	Deadline  string `json:"deadline"`
 
 	// 统计信息
 	TotalPlayers   int `json:"totalPlayers"`
@@ -388,7 +388,18 @@ type WeeklyReportPeriodResponse struct {
 	SubmissionRate float64 `json:"submissionRate"` // 提交率（百分比）
 	ReviewRate     float64 `json:"reviewRate"`     // 审核完成率
 
-	Status string `json:"status"`
+	Status        string                             `json:"status"`
+	TrainingPlans []WeeklyPeriodTrainingPlanResponse `json:"trainingPlans,omitempty"`
+}
+
+type WeeklyPeriodTrainingPlanResponse struct {
+	ID        uint   `json:"id"`
+	Title     string `json:"title"`
+	Theme     string `json:"theme,omitempty"`
+	Location  string `json:"location,omitempty"`
+	StartTime string `json:"startTime"`
+	EndTime   string `json:"endTime,omitempty"`
+	Status    string `json:"status"`
 }
 
 // ToResponse 转换为响应结构

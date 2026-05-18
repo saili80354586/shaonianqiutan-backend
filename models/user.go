@@ -1,6 +1,8 @@
 package models
 
 import (
+	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -59,18 +61,18 @@ type User struct {
 	JerseyNumber   int     `json:"jersey_number"`
 
 	// 家庭信息
-	FatherHeight    float64 `json:"father_height"`
-	FatherPhone     string  `json:"father_phone" gorm:"size:20"`
-	FatherOccupation string `json:"father_occupation" gorm:"size:100"`
-	FatherEdu       string  `json:"father_edu" gorm:"size:50"`
-	FatherJob       string  `json:"father_job" gorm:"size:100"`
-	FatherAthlete   bool    `json:"father_athlete" gorm:"default:false"`
-	MotherHeight    float64 `json:"mother_height"`
-	MotherPhone     string  `json:"mother_phone" gorm:"size:20"`
-	MotherOccupation string `json:"mother_occupation" gorm:"size:100"`
-	MotherEdu       string  `json:"mother_edu" gorm:"size:50"`
-	MotherJob       string  `json:"mother_job" gorm:"size:100"`
-	MotherAthlete   bool    `json:"mother_athlete" gorm:"default:false"`
+	FatherHeight     float64 `json:"father_height"`
+	FatherPhone      string  `json:"father_phone" gorm:"size:20"`
+	FatherOccupation string  `json:"father_occupation" gorm:"size:100"`
+	FatherEdu        string  `json:"father_edu" gorm:"size:50"`
+	FatherJob        string  `json:"father_job" gorm:"size:100"`
+	FatherAthlete    bool    `json:"father_athlete" gorm:"default:false"`
+	MotherHeight     float64 `json:"mother_height"`
+	MotherPhone      string  `json:"mother_phone" gorm:"size:20"`
+	MotherOccupation string  `json:"mother_occupation" gorm:"size:100"`
+	MotherEdu        string  `json:"mother_edu" gorm:"size:50"`
+	MotherJob        string  `json:"mother_job" gorm:"size:100"`
+	MotherAthlete    bool    `json:"mother_athlete" gorm:"default:false"`
 
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
@@ -80,32 +82,32 @@ type User struct {
 	CurrentRole UserRole `json:"current_role" gorm:"size:20;default:''"`
 
 	// 球员扩展资料
-	CurrentTeam    string `json:"current_team" gorm:"size:100"`      // 当前球队/学校
-	PlayingStyle   string `json:"playing_style" gorm:"type:text"`    // 踢球风格 JSON: ["tech","speed"]
-	Wechat         string `json:"wechat" gorm:"size:50"`             // 微信号
-	School         string `json:"school" gorm:"size:100"`            // 学校
-	TechnicalTags  string `json:"technical_tags" gorm:"type:text"`    // 技术特点标签 JSON: ["盘带","射门"]
-	MentalTags     string `json:"mental_tags" gorm:"type:text"`       // 心智性格标签 JSON: ["领导力","抗压"]
-	Experiences    string `json:"experiences" gorm:"type:text"`       // 足球经历 JSON: [{period,team,position,achievement}]
-	DominantFoot   string `json:"dominant_foot" gorm:"size:10"`     // 惯用脚：left/right/both
-	VideoUrl       string `json:"video_url" gorm:"type:text"`       // 视频链接
+	CurrentTeam   string `json:"current_team" gorm:"size:100"`    // 当前球队/学校
+	PlayingStyle  string `json:"playing_style" gorm:"type:text"`  // 踢球风格 JSON: ["tech","speed"]
+	Wechat        string `json:"wechat" gorm:"size:50"`           // 微信号
+	School        string `json:"school" gorm:"size:100"`          // 学校
+	TechnicalTags string `json:"technical_tags" gorm:"type:text"` // 技术特点标签 JSON: ["盘带","射门"]
+	MentalTags    string `json:"mental_tags" gorm:"type:text"`    // 心智性格标签 JSON: ["领导力","抗压"]
+	Experiences   string `json:"experiences" gorm:"type:text"`    // 足球经历 JSON: [{period,team,position,achievement}]
+	DominantFoot  string `json:"dominant_foot" gorm:"size:10"`    // 惯用脚：left/right/both
+	VideoUrl      string `json:"video_url" gorm:"type:text"`      // 视频链接
 
 	// 体测数据（简化存储在 User 表）
-	Sprint30m        float64 `json:"sprint_30m"`          // 30米冲刺(秒)
-	StandingLongJump float64 `json:"standing_long_jump"`  // 立定跳远(cm)
-	Flexibility     float64 `json:"flexibility"`          // 坐位体前屈(cm)
-	PullUps         int     `json:"pull_ups"`             // 引体向上(个)
-	PushUp           int     `json:"push_up"`             // 俯卧撑(个)
-	SitUps          int     `json:"sit_ups"`             // 仰卧起坐(个/分钟)
-	FiveMeterShuttle float64 `json:"five_meter_shuttle"`  // 5×25米折返跑(秒)
-	Coordination     float64 `json:"coordination"`        // 协调性测试(秒)
-	SitAndReach      float64 `json:"sit_and_reach"`       // 坐位体前屈(cm)
+	Sprint30m        float64 `json:"sprint_30m"`         // 30米冲刺(秒)
+	StandingLongJump float64 `json:"standing_long_jump"` // 立定跳远(cm)
+	Flexibility      float64 `json:"flexibility"`        // 坐位体前屈(cm)
+	PullUps          int     `json:"pull_ups"`           // 引体向上(个)
+	PushUp           int     `json:"push_up"`            // 俯卧撑(个)
+	SitUps           int     `json:"sit_ups"`            // 仰卧起坐(个/分钟)
+	FiveMeterShuttle float64 `json:"five_meter_shuttle"` // 5×25米折返跑(秒)
+	Coordination     float64 `json:"coordination"`       // 协调性测试(秒)
+	SitAndReach      float64 `json:"sit_and_reach"`      // 坐位体前屈(cm)
 
 	// 俱乐部扩展资料（注册时填写的球队/球员/教练数量、主要成绩）
-	TeamCount    int    `json:"team_count" gorm:"default:0"`    // 球队数量
-	PlayerCount  int    `json:"player_count" gorm:"default:0"`  // 球员数量
-	CoachCount   int    `json:"coach_count" gorm:"default:0"`   // 教练数量
-	Achievements string `json:"achievements" gorm:"type:text"`    // 主要成绩/荣誉
+	TeamCount    int    `json:"team_count" gorm:"default:0"`   // 球队数量
+	PlayerCount  int    `json:"player_count" gorm:"default:0"` // 球员数量
+	CoachCount   int    `json:"coach_count" gorm:"default:0"`  // 教练数量
+	Achievements string `json:"achievements" gorm:"type:text"` // 主要成绩/荣誉
 
 	// 前端多角色支持（登录时动态填充，不存储）
 	Roles []UserRoleInfo `json:"roles,omitempty" gorm:"-"`
@@ -119,12 +121,45 @@ type User struct {
 // UserRoleInfo 用户角色信息
 type UserRoleInfo struct {
 	Type   UserRole `json:"type"`
-	Status string  `json:"status"`
+	Status string   `json:"status"`
 }
 
 // UserRepository 用户仓库
 type UserRepository struct {
 	db *gorm.DB
+}
+
+// AdminUserListFilters 管理员用户列表筛选条件
+type AdminUserListFilters struct {
+	Keyword string
+	Role    string
+	Status  string
+	City    string
+	AgeMin  *int
+	AgeMax  *int
+}
+
+// AdminUserListItem 管理员用户列表项
+type AdminUserListItem struct {
+	ID           uint       `json:"id" gorm:"column:id"`
+	Phone        string     `json:"phone" gorm:"column:phone"`
+	Nickname     string     `json:"nickname" gorm:"column:nickname"`
+	Name         string     `json:"name" gorm:"column:name"`
+	DisplayName  string     `json:"display_name" gorm:"column:display_name"`
+	Avatar       string     `json:"avatar" gorm:"column:avatar"`
+	Role         UserRole   `json:"role" gorm:"column:role"`
+	Status       UserStatus `json:"status" gorm:"column:status"`
+	Province     string     `json:"province" gorm:"column:province"`
+	City         string     `json:"city" gorm:"column:city"`
+	Age          int        `json:"age" gorm:"column:age"`
+	CurrentTeam  string     `json:"current_team" gorm:"column:current_team"`
+	Club         string     `json:"club" gorm:"column:club"`
+	JerseyColor  string     `json:"jersey_color" gorm:"column:jersey_color"`
+	JerseyNumber int        `json:"jersey_number" gorm:"column:jersey_number"`
+	Position     string     `json:"position" gorm:"column:position"`
+	CreatedAt    time.Time  `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt    time.Time  `json:"updated_at" gorm:"column:updated_at"`
+	LastLoginAt  *string    `json:"last_login_at,omitempty" gorm:"column:last_login_at"`
 }
 
 // NewUserRepository 创建用户仓库
@@ -174,6 +209,78 @@ func (r *UserRepository) UpdateStatus(userID uint, status string) error {
 // UpdateAge 更新用户年龄
 func (r *UserRepository) UpdateAge(userID uint, age int) error {
 	return r.db.Model(&User{}).Where("id = ?", userID).Update("age", age).Error
+}
+
+// FindAdminUsers 获取管理员后台用户列表，支持筛选和最后登录时间
+func (r *UserRepository) FindAdminUsers(page, pageSize int, filters AdminUserListFilters) ([]AdminUserListItem, int64, error) {
+	var users []AdminUserListItem
+	var total int64
+
+	lastLoginSubQuery := r.db.
+		Table("login_logs").
+		Select("user_id, MAX(created_at) AS last_login_at").
+		Group("user_id")
+
+	query := r.db.
+		Model(&User{}).
+		Select(`
+			users.id,
+			users.phone,
+			users.nickname,
+			users.name,
+			COALESCE(NULLIF(TRIM(users.nickname), ''), NULLIF(TRIM(users.name), ''), users.phone) AS display_name,
+			users.avatar,
+			users.role,
+			users.status,
+			users.province,
+			users.city,
+			users.age,
+			users.current_team,
+			users.club,
+			users.jersey_color,
+			users.jersey_number,
+			users.position,
+			users.created_at,
+			users.updated_at,
+			ll.last_login_at
+		`).
+		Joins("LEFT JOIN (?) AS ll ON ll.user_id = users.id", lastLoginSubQuery)
+
+	if keyword := strings.TrimSpace(filters.Keyword); keyword != "" {
+		like := "%" + keyword + "%"
+		if id, err := strconv.ParseUint(keyword, 10, 64); err == nil && id > 0 {
+			query = query.Where("(users.nickname LIKE ? OR users.name LIKE ? OR users.phone LIKE ? OR users.id = ?)", like, like, like, id)
+		} else {
+			query = query.Where("(users.nickname LIKE ? OR users.name LIKE ? OR users.phone LIKE ?)", like, like, like)
+		}
+	}
+	if role := strings.TrimSpace(filters.Role); role != "" {
+		query = query.Where("users.role = ?", role)
+	}
+	if status := strings.TrimSpace(filters.Status); status != "" {
+		query = query.Where("users.status = ?", status)
+	}
+	if city := strings.TrimSpace(filters.City); city != "" {
+		like := "%" + city + "%"
+		query = query.Where("users.city LIKE ?", like)
+	}
+	if filters.AgeMin != nil {
+		query = query.Where("users.age >= ?", *filters.AgeMin)
+	}
+	if filters.AgeMax != nil {
+		query = query.Where("users.age <= ?", *filters.AgeMax)
+	}
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * pageSize
+	err := query.Order("users.created_at DESC").
+		Offset(offset).
+		Limit(pageSize).
+		Scan(&users).Error
+	return users, total, err
 }
 
 // Count 统计总用户数

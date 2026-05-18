@@ -13,10 +13,14 @@ func SetupClubHomeRoutes(r *gin.RouterGroup, clubHomeCtrl *controllers.ClubHomeC
 	{
 		clubs.GET("/:clubId/home", clubHomeCtrl.GetClubHome)
 		clubs.GET("/:clubId/home/news", clubHomeCtrl.GetNews)
+		clubs.POST("/:clubId/home/inquiries", middleware.OptionalAuthMiddleware(), clubHomeCtrl.CreateHomeInquiry)
 	}
 	// 需要认证的俱乐部主页管理
 	clubs.Use(middleware.AuthMiddleware())
 	{
+		clubs.GET("/:clubId/home/manage", clubHomeCtrl.GetClubHomeManage)
+		clubs.GET("/:clubId/home/inquiries", middleware.ClubOwnerMiddleware("clubId"), clubHomeCtrl.ListHomeInquiries)
+		clubs.PUT("/:clubId/home/inquiries/:id", middleware.ClubOwnerMiddleware("clubId"), clubHomeCtrl.UpdateHomeInquiryStatus)
 		clubs.PUT("/:clubId/home", clubHomeCtrl.SaveClubHome)
 		clubs.PUT("/:clubId/home/hero", clubHomeCtrl.UpdateHero)
 		clubs.PUT("/:clubId/home/about", clubHomeCtrl.UpdateAbout)
@@ -25,6 +29,7 @@ func SetupClubHomeRoutes(r *gin.RouterGroup, clubHomeCtrl *controllers.ClubHomeC
 		clubs.PUT("/:clubId/home/recruitment", clubHomeCtrl.UpdateRecruitment)
 		clubs.PUT("/:clubId/home/social-links", clubHomeCtrl.UpdateSocialLinks)
 		clubs.PUT("/:clubId/home/modules", clubHomeCtrl.UpdateModules)
+		clubs.POST("/:clubId/home/publish", clubHomeCtrl.PublishClubHome)
 		clubs.PUT("/:clubId/home/teams", clubHomeCtrl.UpdateTeams)
 		clubs.PUT("/:clubId/home/coaches", clubHomeCtrl.UpdateCoaches)
 		clubs.PUT("/:clubId/home/players", clubHomeCtrl.UpdatePlayers)

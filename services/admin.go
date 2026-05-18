@@ -28,6 +28,7 @@ type AdminService struct {
 	platformAnnRepo     *models.PlatformAnnouncementRepository
 	bannerRepo          *models.BannerRepository
 	faqRepo             *models.FAQRepository
+	helpGuideRepo       *models.HelpGuideRepository
 	loginLogRepo        *models.LoginLogRepository
 	videoAnalysisRepo   *models.VideoAnalysisRepository
 	assignmentRepo      *models.OrderAssignmentRepository
@@ -201,6 +202,7 @@ func NewAdminService(
 	platformAnnRepo *models.PlatformAnnouncementRepository,
 	bannerRepo *models.BannerRepository,
 	faqRepo *models.FAQRepository,
+	helpGuideRepo *models.HelpGuideRepository,
 	loginLogRepo *models.LoginLogRepository,
 	videoAnalysisRepo *models.VideoAnalysisRepository,
 	assignmentRepo *models.OrderAssignmentRepository,
@@ -217,6 +219,7 @@ func NewAdminService(
 		platformAnnRepo:   platformAnnRepo,
 		bannerRepo:        bannerRepo,
 		faqRepo:           faqRepo,
+		helpGuideRepo:     helpGuideRepo,
 		loginLogRepo:      loginLogRepo,
 		videoAnalysisRepo: videoAnalysisRepo,
 		assignmentRepo:    assignmentRepo,
@@ -1080,8 +1083,8 @@ func (s *AdminService) GetTopData() (map[string]interface{}, error) {
 // ========== User Management ==========
 
 // GetUserList 获取用户列表
-func (s *AdminService) GetUserList(page, pageSize int) ([]models.User, int64, error) {
-	return s.userRepo.FindAll(page, pageSize)
+func (s *AdminService) GetUserList(page, pageSize int, filters models.AdminUserListFilters) ([]models.AdminUserListItem, int64, error) {
+	return s.userRepo.FindAdminUsers(page, pageSize, filters)
 }
 
 // UpdateUserStatus 更新用户状态
@@ -1170,13 +1173,67 @@ func isValidAdminUserStatus(status string) bool {
 
 // ========== Report Management ==========
 
+type AdminPendingReportAnalyst struct {
+	ID           uint   `json:"id"`
+	UserID       uint   `json:"user_id"`
+	Name         string `json:"name"`
+	Nickname     string `json:"nickname"`
+	Phone        string `json:"phone"`
+	ContactPhone string `json:"contact_phone"`
+}
+
+type AdminPendingReportItem struct {
+	models.Report
+	Analyst *AdminPendingReportAnalyst `json:"analyst,omitempty"`
+}
+
 // GetPendingReports 获取待审核报告列表
-func (s *AdminService) GetPendingReports(page, pageSize int) ([]models.Report, int64, error) {
+func (s *AdminService) GetPendingReports(page, pageSize int) ([]AdminPendingReportItem, int64, error) {
 	reports, total, err := s.reportRepo.FindByStatus(models.ReportStatusProcessing, page, pageSize)
 	if err != nil {
 		log.Printf("[AdminService] get pending reports failed: %v", err)
+		return nil, total, err
 	}
-	return reports, total, err
+
+	analystIDs := make([]uint, 0, len(reports))
+	for _, report := range reports {
+		if report.AnalystID != 0 {
+			analystIDs = append(analystIDs, report.AnalystID)
+		}
+	}
+
+	analystsByID := make(map[uint]models.Analyst)
+	if len(analystIDs) > 0 {
+		var analysts []models.Analyst
+		if err := s.GetDB().
+			Preload("User").
+			Where("id IN ?", analystIDs).
+			Find(&analysts).Error; err != nil {
+			return nil, total, err
+		}
+		for _, analyst := range analysts {
+			analystsByID[analyst.ID] = analyst
+		}
+	}
+
+	items := make([]AdminPendingReportItem, 0, len(reports))
+	for _, report := range reports {
+		item := AdminPendingReportItem{Report: report}
+		if analyst, ok := analystsByID[report.AnalystID]; ok {
+			displayName := firstNonEmptyProgress(analyst.Name, analyst.User.Nickname, analyst.User.Name, analyst.User.Phone, analyst.ContactPhone)
+			item.Analyst = &AdminPendingReportAnalyst{
+				ID:           analyst.ID,
+				UserID:       analyst.UserID,
+				Name:         analyst.Name,
+				Nickname:     displayName,
+				Phone:        analyst.User.Phone,
+				ContactPhone: analyst.ContactPhone,
+			}
+		}
+		items = append(items, item)
+	}
+
+	return items, total, nil
 }
 
 // ReviewReport 审核报告
@@ -1713,6 +1770,28 @@ func (s *AdminService) UpdateFAQ(id uint, updates map[string]interface{}) error 
 // DeleteFAQ 删除FAQ
 func (s *AdminService) DeleteFAQ(id uint) error {
 	return s.faqRepo.Delete(id)
+}
+
+// ========== Help Guide ==========
+
+// GetHelpGuides 获取使用指南列表
+func (s *AdminService) GetHelpGuides(page, pageSize int, role string, enabled *bool) ([]models.HelpGuide, int64, error) {
+	return s.helpGuideRepo.FindAll(page, pageSize, role, enabled)
+}
+
+// CreateHelpGuide 创建使用指南
+func (s *AdminService) CreateHelpGuide(guide *models.HelpGuide) error {
+	return s.helpGuideRepo.Create(guide)
+}
+
+// UpdateHelpGuide 更新使用指南
+func (s *AdminService) UpdateHelpGuide(id uint, updates map[string]interface{}) error {
+	return s.helpGuideRepo.Update(id, updates)
+}
+
+// DeleteHelpGuide 删除使用指南
+func (s *AdminService) DeleteHelpGuide(id uint) error {
+	return s.helpGuideRepo.Delete(id)
 }
 
 // ========== Login Log ==========

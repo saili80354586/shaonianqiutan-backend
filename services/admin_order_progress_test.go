@@ -59,6 +59,7 @@ func setupAdminOrderProgressTestService(t *testing.T) (*gorm.DB, *AdminService, 
 		nil,
 		nil,
 		nil,
+		nil,
 		models.NewVideoAnalysisRepository(db),
 		models.NewOrderAssignmentRepository(db),
 		models.NewOrderStatusHistoryRepository(db),
@@ -173,5 +174,72 @@ func TestGetOrderAnalysisProgressDetailScoreDimensionsUseEvents(t *testing.T) {
 	}
 	if ballControl.UpdateCount != 1 {
 		t.Fatalf("ball_control update_count = %d, want 1", ballControl.UpdateCount)
+	}
+}
+
+func TestBuildAdminScoreProgressNormalizesHundredPointScores(t *testing.T) {
+	scores := models.NewDefaultScores()
+	scores.BallControl.Score = 82
+	scores.BallControl.Comment = "控球稳定，处理球更主动。"
+	scores.OffBallMovement.Score = 70
+	scoresJSON, err := scores.ToJSON()
+	if err != nil {
+		t.Fatalf("scores json: %v", err)
+	}
+
+	overview, groups := buildAdminScoreProgress(&models.VideoAnalysis{Scores: scoresJSON}, map[string]operationEventStats{})
+	if overview.CompletedCount != 1 {
+		t.Fatalf("completed scores = %d, want 1", overview.CompletedCount)
+	}
+	if overview.NotStartedCount != 19 {
+		t.Fatalf("not started scores = %d, want 19", overview.NotStartedCount)
+	}
+
+	dimensions := map[string]AdminScoreDimensionDTO{}
+	for _, group := range groups {
+		for _, item := range group.Items {
+			dimensions[item.FieldKey] = item
+		}
+	}
+	if dimensions["ball_control"].Score != 8.2 {
+		t.Fatalf("ball_control score = %.1f, want 8.2", dimensions["ball_control"].Score)
+	}
+	if dimensions["off_ball_movement"].Score != 7.0 {
+		t.Fatalf("off_ball_movement score = %.1f, want 7.0", dimensions["off_ball_movement"].Score)
+	}
+	if dimensions["off_ball_movement"].Status != "not_started" {
+		t.Fatalf("off_ball_movement status = %s, want not_started", dimensions["off_ball_movement"].Status)
+	}
+}
+
+func TestBuildAdminScoreProgressTreatsExplicitSevenWithCommentAsCompleted(t *testing.T) {
+	scores := models.NewDefaultScores()
+	scores.PressingAwareness.Score = 7
+	scores.PressingAwareness.Comment = "防守积极，多通过预判抢夺球权。"
+	scoresJSON, err := scores.ToJSON()
+	if err != nil {
+		t.Fatalf("scores json: %v", err)
+	}
+
+	eventStats := map[string]operationEventStats{
+		"pressing_awareness": {count: 1},
+	}
+
+	overview, groups := buildAdminScoreProgress(&models.VideoAnalysis{Scores: scoresJSON}, eventStats)
+	if overview.CompletedCount != 1 {
+		t.Fatalf("completed scores = %d, want 1", overview.CompletedCount)
+	}
+	if overview.CommentOnlyCount != 0 {
+		t.Fatalf("comment only scores = %d, want 0", overview.CommentOnlyCount)
+	}
+
+	dimensions := map[string]AdminScoreDimensionDTO{}
+	for _, group := range groups {
+		for _, item := range group.Items {
+			dimensions[item.FieldKey] = item
+		}
+	}
+	if dimensions["pressing_awareness"].Status != "completed" {
+		t.Fatalf("pressing_awareness status = %s, want completed", dimensions["pressing_awareness"].Status)
 	}
 }

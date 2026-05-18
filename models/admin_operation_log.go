@@ -84,4 +84,7 @@ var ActionDisplayName = map[string]string{
 	"create_faq":               "创建FAQ",
 	"update_faq":               "更新FAQ",
 	"delete_faq":               "删除FAQ",
+	"create_help_guide":        "创建使用指南",
+	"update_help_guide":        "更新使用指南",
+	"delete_help_guide":        "删除使用指南",
 }

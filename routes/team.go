@@ -5,6 +5,7 @@ import (
 	"github.com/shaonianqiutan/backend/controllers"
 	"github.com/shaonianqiutan/backend/middleware"
 	"github.com/shaonianqiutan/backend/repositories"
+	"github.com/shaonianqiutan/backend/services"
 	"gorm.io/gorm"
 )
 
@@ -16,6 +17,7 @@ func SetupTeamRoutes(
 	matchSummaryRepo *repositories.MatchSummaryRepository,
 	teamHomeController *controllers.CoachTeamHomeController,
 	ptController *controllers.PhysicalTestController,
+	notificationService *services.NotificationService,
 	db *gorm.DB,
 ) {
 	teamCtrl := controllers.NewTeamController(
@@ -24,6 +26,7 @@ func SetupTeamRoutes(
 		matchSummaryRepo,
 		nil, nil, nil, db,
 	)
+	teamCtrl.SetNotificationService(notificationService)
 
 	// 俱乐部下的球队路由（需认证 - 俱乐部管理员）
 	clubs := r.Group("/clubs")
@@ -41,6 +44,12 @@ func SetupTeamRoutes(
 	{
 		// 球队基本信息
 		teams.GET("/:teamId", teamCtrl.GetTeam)
+		teams.GET("/:teamId/calendar", teamCtrl.GetTeamCalendar)
+		teams.GET("/:teamId/monthly-report", teamCtrl.GetTeamMonthlyReport)
+		teams.GET("/:teamId/monthly-report/archive", teamCtrl.GetTeamMonthlyReportArchive)
+		teams.POST("/:teamId/monthly-report/archive", teamCtrl.SaveTeamMonthlyReportArchive)
+		teams.PUT("/:teamId/monthly-report/archive/review", teamCtrl.ReviewTeamMonthlyReportArchive)
+		teams.PUT("/:teamId/monthly-report/archive/adjustments/:itemId", teamCtrl.UpdateTeamMonthlyReportArchiveAdjustment)
 		teams.PUT("/:teamId", teamCtrl.UpdateTeam)
 		teams.DELETE("/:teamId", middleware.RequireClubAdmin(), teamCtrl.DeleteTeam)
 		teams.PUT("/:teamId/restore", middleware.RequireClubAdmin(), teamCtrl.RestoreTeam)

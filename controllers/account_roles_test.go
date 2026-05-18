@@ -27,6 +27,7 @@ func setupAccountRoleControllerTest(t *testing.T) (*gorm.DB, *AccountRoleControl
 		&models.Analyst{},
 		&models.Scout{},
 		&models.Club{},
+		&models.Coach{},
 		&models.ClubCoach{},
 		&models.TeamCoach{},
 	); err != nil {
@@ -133,5 +134,53 @@ func TestReviewRoleApplicationApprovesAnalystRole(t *testing.T) {
 	}
 	if analyst.Name == "" || analyst.ContactEmail != "analyst@example.com" {
 		t.Fatalf("analyst profile not hydrated: %+v", analyst)
+	}
+}
+
+func TestReviewRoleApplicationApprovesCoachRoleCreatesCoachProfile(t *testing.T) {
+	db, ctrl, user, admin := setupAccountRoleControllerTest(t)
+
+	application := models.RoleApplication{
+		UserID:      user.ID,
+		Role:        models.RoleCoach,
+		Status:      models.RoleApplicationStatusPending,
+		Source:      "self_apply",
+		ProfileJSON: `{"bio":"青训执教十年","license_type":"B级","license_number":"CN-2026-88","specialties":"技术训练, 青训培养","style":"技术型, 战术型","age_groups":"U10, U12, U14","coaching_years":10,"current_club":"星途青训","city":"上海"}`,
+	}
+	if err := db.Create(&application).Error; err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{{Key: "id", Value: uintToString(application.ID)}}
+	c.Request = httptest.NewRequest(http.MethodPost, "/admin/role-applications/"+uintToString(application.ID)+"/review", strings.NewReader(`{"status":"approved"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("user", &admin)
+	c.Set("userId", admin.ID)
+
+	ctrl.ReviewRoleApplication(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("review status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var record models.UserRoleRecord
+	if err := db.Where("user_id = ? AND role = ?", user.ID, models.RoleCoach).First(&record).Error; err != nil {
+		t.Fatalf("find role record: %v", err)
+	}
+	if record.Status != "active" || record.ApprovedBy != admin.ID {
+		t.Fatalf("role record = %+v, want active approved by admin", record)
+	}
+
+	var coach models.Coach
+	if err := db.Where("user_id = ?", user.ID).First(&coach).Error; err != nil {
+		t.Fatalf("find coach profile: %v", err)
+	}
+	if coach.LicenseType != "B级" || coach.CurrentClub != "星途青训" || coach.City != "上海" {
+		t.Fatalf("coach profile not hydrated: %+v", coach)
+	}
+	if coach.Verified != true {
+		t.Fatalf("coach verified = %v, want true", coach.Verified)
 	}
 }

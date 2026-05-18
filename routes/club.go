@@ -98,6 +98,8 @@ func SetupClubRoutes(
 		club.GET("/training-plans", trainingPlanController.ListTrainingPlans)
 		club.POST("/training-plans", trainingPlanController.CreateTrainingPlan)
 		club.GET("/training-plans/:id", trainingPlanController.GetTrainingPlan)
+		club.GET("/training-plans/:id/attendance", trainingPlanController.GetTrainingAttendance)
+		club.PUT("/training-plans/:id/attendance", trainingPlanController.SaveTrainingAttendance)
 		club.PUT("/training-plans/:id", trainingPlanController.UpdateTrainingPlan)
 		club.DELETE("/training-plans/:id", trainingPlanController.DeleteTrainingPlan)
 

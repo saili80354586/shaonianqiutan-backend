@@ -18,7 +18,8 @@ func SetupAnalystRoutes(
 		analyst.GET("/public", analystController.GetAnalystPublicProfileByUser) // 通过 user_id 获取分析师公开主页
 		analyst.GET("/:id", analystController.GetAnalystByID)                   // 获取分析师详情
 		analyst.GET("/:id/public", analystController.GetAnalystPublicProfile)   // 通过 analyst_id 获取分析师公开主页
-		analyst.POST("/:id/inquiries", analystController.CreateInquiry)         // 提交咨询意向
+		analyst.GET("/:id/official-works", analystController.GetAnalystOfficialWorks)
+		analyst.POST("/:id/inquiries", analystController.CreateInquiry) // 提交咨询意向
 	}
 
 	// 分析师专用路由(需要认证和分析师权限)

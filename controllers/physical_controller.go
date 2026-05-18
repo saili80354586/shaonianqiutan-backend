@@ -3,6 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -15,11 +16,16 @@ import (
 )
 
 type PhysicalTestController struct {
-	ptService *services.PhysicalTestService
+	ptService           *services.PhysicalTestService
+	notificationService *services.NotificationService
 }
 
 func NewPhysicalTestController(ptService *services.PhysicalTestService) *PhysicalTestController {
 	return &PhysicalTestController{ptService: ptService}
+}
+
+func (c *PhysicalTestController) SetNotificationService(notificationService *services.NotificationService) {
+	c.notificationService = notificationService
 }
 
 func (c *PhysicalTestController) getAccessibleClub(ctx *gin.Context, userID uint) (*models.Club, error) {
@@ -169,6 +175,7 @@ func (c *PhysicalTestController) CreatePhysicalTest(ctx *gin.Context) {
 		utils.ServerError(ctx, "创建失败")
 		return
 	}
+	c.notifyPhysicalTestCreated(test)
 
 	utils.SuccessResponseWithMessage(ctx, gin.H{
 		"id":        test.ID,
@@ -229,6 +236,101 @@ func (c *PhysicalTestController) GetPhysicalTest(ctx *gin.Context) {
 		"createdAt":        utils.FormatTime(&test.CreatedAt),
 		"updatedAt":        utils.FormatTime(&test.UpdatedAt),
 	})
+}
+
+// GetTrainingSuggestions 获取体测报告回流的训练建议
+func (c *PhysicalTestController) GetTrainingSuggestions(ctx *gin.Context) {
+	userID := ctx.GetUint("userId")
+	testID, err := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if err != nil {
+		utils.ValidationError(ctx, "无效的ID")
+		return
+	}
+
+	club, err := c.getAccessibleClub(ctx, userID)
+	if err != nil || club == nil {
+		utils.ForbiddenError(ctx, "无权限")
+		return
+	}
+
+	test, err := c.ptService.GetPhysicalTestByID(uint(testID))
+	if err != nil || test == nil || test.ClubID != club.ID {
+		utils.NotFoundError(ctx, "体测活动不存在")
+		return
+	}
+
+	suggestions, playersCovered, reportsUsed := c.collectTrainingSuggestions(test)
+	utils.SuccessResponse(ctx, gin.H{
+		"activityId":     test.ID,
+		"activityName":   test.Name,
+		"suggestions":    suggestions,
+		"playersCovered": playersCovered,
+		"reportsUsed":    reportsUsed,
+	})
+}
+
+func (c *PhysicalTestController) collectTrainingSuggestions(test *models.PhysicalTestActivity) ([]string, int, int) {
+	var reports []models.PhysicalTestReport
+	_ = c.ptService.GetDB().
+		Where("club_id = ? AND activity_id = ?", test.ClubID, test.ID).
+		Preload("Record").
+		Order("created_at DESC").
+		Find(&reports).Error
+
+	suggestionSet := make(map[string]struct{})
+	suggestions := make([]string, 0)
+	playerSet := make(map[uint]struct{})
+
+	addSuggestion := func(value string) {
+		if value == "" {
+			return
+		}
+		if _, ok := suggestionSet[value]; ok {
+			return
+		}
+		suggestionSet[value] = struct{}{}
+		suggestions = append(suggestions, value)
+	}
+
+	reportService := services.NewPhysicalTestReportService(c.ptService.GetDB())
+	for _, report := range reports {
+		playerSet[report.PlayerID] = struct{}{}
+		var data models.PhysicalTestReportData
+		if err := json.Unmarshal([]byte(report.ReportData), &data); err != nil {
+			continue
+		}
+		if len(data.TrainingSuggestions) == 0 && report.Record != nil {
+			if generated, err := reportService.GenerateReport(report.Record); err == nil && generated != nil {
+				data.TrainingSuggestions = generated.TrainingSuggestions
+			}
+		}
+		for _, suggestion := range data.TrainingSuggestions {
+			addSuggestion(suggestion)
+		}
+	}
+
+	if len(suggestions) == 0 {
+		records, err := c.ptService.GetPhysicalTestRecords(test.ID, nil)
+		if err == nil {
+			for _, record := range records {
+				if getRecordStatus(&record) != "completed" {
+					continue
+				}
+				playerSet[record.PlayerID] = struct{}{}
+				if generated, err := reportService.GenerateReport(&record); err == nil && generated != nil {
+					for _, suggestion := range generated.TrainingSuggestions {
+						addSuggestion(suggestion)
+					}
+				}
+			}
+		}
+	}
+
+	if len(suggestions) > 8 {
+		suggestions = suggestions[:8]
+	}
+
+	return suggestions, len(playerSet), len(reports)
 }
 
 // UpdatePhysicalTest 更新体测活动
@@ -359,11 +461,43 @@ func (c *PhysicalTestController) NotifyPhysicalTest(ctx *gin.Context) {
 		return
 	}
 
-	// TODO: 实现真实的通知发送逻辑
+	sent := c.notifyPhysicalTestCreated(test)
 	utils.SuccessResponseWithMessage(ctx, gin.H{
-		"sent":   len(test.GetPlayerIDs()),
+		"sent":   sent,
 		"failed": 0,
 	}, "通知已发送")
+}
+
+func (c *PhysicalTestController) notifyPhysicalTestCreated(test *models.PhysicalTestActivity) int {
+	if c.notificationService == nil || test == nil {
+		return 0
+	}
+
+	playerIDs := test.GetPlayerIDs()
+	if len(playerIDs) == 0 {
+		return 0
+	}
+
+	extra := map[string]interface{}{
+		"start_date": test.StartDate.Format("2006-01-02"),
+		"location":   test.Location,
+		"template":   string(test.Template),
+	}
+	err := c.notificationService.NotifyTeamCalendarEvent(
+		playerIDs,
+		models.NotificationTypePhysicalTestCreated,
+		"新的体测安排",
+		test.Name+" 已加入球队日历，请按时参加",
+		"physical_test",
+		test.ID,
+		"/user-dashboard?tab=team_calendar",
+		extra,
+	)
+	if err != nil {
+		log.Printf("发送体测安排通知失败 (testID=%d): %v", test.ID, err)
+		return 0
+	}
+	return len(playerIDs)
 }
 
 // GetPhysicalTestRecords 获取体测数据列表

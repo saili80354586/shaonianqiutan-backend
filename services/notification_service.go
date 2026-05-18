@@ -219,6 +219,27 @@ func (s *NotificationService) NotifyAnalystReportRejected(analystUserID, reportI
 	return err
 }
 
+// NotifyAnalystAIReportFailed 通知分析师 AI 报告生成失败
+func (s *NotificationService) NotifyAnalystAIReportFailed(analystUserID, orderID, analysisID, reportID uint, playerName, reason string) error {
+	title := "AI 报告生成失败"
+	content := "你的 AI 报告生成失败，请检查评分与评语后重新提交"
+	if playerName != "" {
+		content = "球员 " + playerName + " 的 AI 报告生成失败，请检查评分与评语后重新提交"
+	}
+	if reason != "" {
+		content += "，原因：" + reason
+	}
+
+	data := &models.NotificationData{
+		TargetType: "analysis",
+		TargetID:   analysisID,
+		ReportID:   reportID,
+		Link:       "/analyst/dashboard?tab=analysis&orderId=" + itoa(int(orderID)),
+	}
+	_, err := s.CreateNotification(analystUserID, models.NotificationTypeTask, title, content, data)
+	return err
+}
+
 // NotifyWeeklyReportCreated 通知球员教练发起了周报
 func (s *NotificationService) NotifyWeeklyReportCreated(playerID uint, coachName, teamName, weekLabel string, reportID uint) error {
 	title := "教练发起了本周周报"
@@ -386,6 +407,37 @@ func (s *NotificationService) NotifyMatchSummaryComplete(playerID uint, coachNam
 	}
 	_, err := s.CreateNotification(playerID, models.NotificationTypeMatchSummaryComplete, title, content, data)
 	return err
+}
+
+// NotifyTeamCalendarEvent 通知球员有新的球队日历事项
+func (s *NotificationService) NotifyTeamCalendarEvent(playerIDs []uint, notificationType models.NotificationType, title, content, targetType string, targetID uint, link string, extra map[string]interface{}) error {
+	if len(playerIDs) == 0 {
+		return nil
+	}
+
+	seen := make(map[uint]struct{}, len(playerIDs))
+	uniquePlayerIDs := make([]uint, 0, len(playerIDs))
+	for _, playerID := range playerIDs {
+		if playerID == 0 {
+			continue
+		}
+		if _, ok := seen[playerID]; ok {
+			continue
+		}
+		seen[playerID] = struct{}{}
+		uniquePlayerIDs = append(uniquePlayerIDs, playerID)
+	}
+	if len(uniquePlayerIDs) == 0 {
+		return nil
+	}
+
+	data := &models.NotificationData{
+		TargetType: targetType,
+		TargetID:   targetID,
+		Link:       link,
+		Extra:      extra,
+	}
+	return s.CreateBatchNotifications(uniquePlayerIDs, notificationType, title, content, data)
 }
 
 // GetByID 获取通知详情

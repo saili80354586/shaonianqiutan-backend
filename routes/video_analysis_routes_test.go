@@ -168,6 +168,64 @@ func TestVideoAnalysisClipExportRouteDownloadsZip(t *testing.T) {
 	}
 }
 
+func TestVideoAnalysisSingleClipDownloadRoute(t *testing.T) {
+	clipDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(clipDir, "route-single-ready.mp4"), []byte("route-single-clip"), 0644); err != nil {
+		t.Fatalf("write ready clip: %v", err)
+	}
+
+	router, db, analyst := setupVideoAnalysisRouteTestRouter(t, clipDir)
+	analysis := models.VideoAnalysis{
+		OrderID:        23,
+		AnalystID:      analyst.ID,
+		UserID:         303,
+		PlayerName:     "Route Single Clip Player",
+		PlayerPosition: "midfielder",
+		Status:         models.AnalysisStatusScoring,
+	}
+	if err := db.Create(&analysis).Error; err != nil {
+		t.Fatalf("create analysis: %v", err)
+	}
+
+	endTimeMs := 12000
+	highlight := models.AnalysisHighlight{
+		AnalysisID:      analysis.ID,
+		Timestamp:       "00:04-00:12",
+		MarkerType:      models.HighlightMarkerHighlight,
+		Mode:            models.HighlightModeRange,
+		StartTimeMs:     4000,
+		EndTimeMs:       &endTimeMs,
+		TagType:         models.HighlightPass,
+		Description:     "单片段下载验证。",
+		VideoClipURL:    "http://localhost:8080/uploads/video-clips/route-single-ready.mp4",
+		ClipStatus:      models.HighlightClipReady,
+		IncludeInReport: true,
+	}
+	if err := db.Create(&highlight).Error; err != nil {
+		t.Fatalf("create highlight: %v", err)
+	}
+
+	token, err := middleware.GenerateToken(analyst.UserID, "13930009001")
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/video-analysis/markers/"+strconv.Itoa(int(highlight.ID))+"/clip/download", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Header().Get("Content-Disposition"), "route-single-ready.mp4") {
+		t.Fatalf("content-disposition = %q, want clip filename", rec.Header().Get("Content-Disposition"))
+	}
+	if rec.Body.String() != "route-single-clip" {
+		t.Fatalf("body = %q, want route-single-clip", rec.Body.String())
+	}
+}
+
 func TestVideoAnalysisClipExportJobRouteDownloadsZip(t *testing.T) {
 	clipDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(clipDir, "route-job-ready.mp4"), []byte("route-job-ready-clip"), 0644); err != nil {

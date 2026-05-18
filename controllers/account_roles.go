@@ -503,7 +503,7 @@ func (ctrl *AccountRoleController) ensureBusinessProfile(tx *gorm.DB, applicatio
 	case models.RoleClub:
 		return ctrl.ensureClubProfile(tx, &user, profile)
 	case models.RoleCoach:
-		return 0, nil
+		return ctrl.ensureCoachProfile(tx, &user, profile)
 	default:
 		return 0, nil
 	}
@@ -567,15 +567,24 @@ func (ctrl *AccountRoleController) ensureAnalystProfile(tx *gorm.DB, user *model
 }
 
 func (ctrl *AccountRoleController) ensureScoutProfile(tx *gorm.DB, user *models.User, profile map[string]interface{}) (uint, error) {
+	scoutingExperience := firstRoleNonEmpty(stringFromProfile(profile, "scouting_experience"), stringFromProfile(profile, "experience"))
+	specialties := jsonArrayStringFromProfile(profile, "specialties", "specialty", "qualification")
+	preferredAgeGroups := jsonArrayStringFromProfile(profile, "preferred_age_groups", "age_groups")
+	scoutingRegions := jsonArrayStringFromProfile(profile, "scouting_regions", "regions")
+	currentOrganization := firstRoleNonEmpty(stringFromProfile(profile, "current_organization"), stringFromProfile(profile, "organization"))
+	bio := firstRoleNonEmpty(stringFromProfile(profile, "summary"), stringFromProfile(profile, "bio"))
+
 	var scout models.Scout
 	err := tx.Where("user_id = ?", user.ID).First(&scout).Error
 	if err == gorm.ErrRecordNotFound {
 		scout = models.Scout{
 			UserID:              user.ID,
-			ScoutingExperience:  stringFromProfile(profile, "experience"),
-			Specialties:         firstRoleNonEmpty(stringFromProfile(profile, "specialty"), stringFromProfile(profile, "qualification")),
-			CurrentOrganization: stringFromProfile(profile, "organization"),
-			Bio:                 firstRoleNonEmpty(stringFromProfile(profile, "summary"), stringFromProfile(profile, "bio")),
+			ScoutingExperience:  scoutingExperience,
+			Specialties:         specialties,
+			PreferredAgeGroups:  preferredAgeGroups,
+			ScoutingRegions:     scoutingRegions,
+			CurrentOrganization: currentOrganization,
+			Bio:                 bio,
 			Verified:            true,
 		}
 		if err := tx.Create(&scout).Error; err != nil {
@@ -586,27 +595,50 @@ func (ctrl *AccountRoleController) ensureScoutProfile(tx *gorm.DB, user *models.
 	if err != nil {
 		return 0, err
 	}
-	if !scout.Verified {
-		if err := tx.Model(&models.Scout{}).Where("id = ?", scout.ID).Update("verified", true).Error; err != nil {
-			return 0, err
-		}
+	updates := map[string]interface{}{"verified": true}
+	if scout.ScoutingExperience == "" && scoutingExperience != "" {
+		updates["scouting_experience"] = scoutingExperience
+	}
+	if isEmptyRoleJSONField(scout.Specialties) && specialties != "" {
+		updates["specialties"] = specialties
+	}
+	if isEmptyRoleJSONField(scout.PreferredAgeGroups) && preferredAgeGroups != "" {
+		updates["preferred_age_groups"] = preferredAgeGroups
+	}
+	if isEmptyRoleJSONField(scout.ScoutingRegions) && scoutingRegions != "" {
+		updates["scouting_regions"] = scoutingRegions
+	}
+	if scout.CurrentOrganization == "" && currentOrganization != "" {
+		updates["current_organization"] = currentOrganization
+	}
+	if scout.Bio == "" && bio != "" {
+		updates["bio"] = bio
+	}
+	if err := tx.Model(&models.Scout{}).Where("id = ?", scout.ID).Updates(updates).Error; err != nil {
+		return 0, err
 	}
 	return scout.ID, nil
 }
 
 func (ctrl *AccountRoleController) ensureClubProfile(tx *gorm.DB, user *models.User, profile map[string]interface{}) (uint, error) {
+	clubName := firstRoleNonEmpty(stringFromProfile(profile, "club_name"), stringFromProfile(profile, "organization"), user.Club, user.Name, user.Nickname, "用户"+uintToString(user.ID)+"的俱乐部")
+	description := firstRoleNonEmpty(stringFromProfile(profile, "summary"), stringFromProfile(profile, "bio"))
+	contactName := firstRoleNonEmpty(stringFromProfile(profile, "contact_name"), user.Name, user.Nickname)
+	contactPhone := firstRoleNonEmpty(stringFromProfile(profile, "contact_phone"), user.Phone)
+	province := firstRoleNonEmpty(stringFromProfile(profile, "province"), user.Province)
+	city := firstRoleNonEmpty(stringFromProfile(profile, "city"), user.City)
+
 	var club models.Club
 	err := tx.Where("user_id = ?", user.ID).First(&club).Error
 	if err == gorm.ErrRecordNotFound {
-		clubName := firstRoleNonEmpty(stringFromProfile(profile, "club_name"), stringFromProfile(profile, "organization"), user.Club, user.Name, user.Nickname, "用户"+uintToString(user.ID)+"的俱乐部")
 		club = models.Club{
 			UserID:       user.ID,
 			Name:         clubName,
-			Description:  firstRoleNonEmpty(stringFromProfile(profile, "summary"), stringFromProfile(profile, "bio")),
-			ContactName:  firstRoleNonEmpty(user.Name, user.Nickname),
-			ContactPhone: firstRoleNonEmpty(stringFromProfile(profile, "contact_phone"), user.Phone),
-			Province:     user.Province,
-			City:         user.City,
+			Description:  description,
+			ContactName:  contactName,
+			ContactPhone: contactPhone,
+			Province:     province,
+			City:         city,
 		}
 		if err := tx.Create(&club).Error; err != nil {
 			return 0, err
@@ -616,7 +648,96 @@ func (ctrl *AccountRoleController) ensureClubProfile(tx *gorm.DB, user *models.U
 	if err != nil {
 		return 0, err
 	}
+	updates := map[string]interface{}{}
+	if club.Name == "" && clubName != "" {
+		updates["name"] = clubName
+	}
+	if club.Description == "" && description != "" {
+		updates["description"] = description
+	}
+	if club.ContactName == "" && contactName != "" {
+		updates["contact_name"] = contactName
+	}
+	if club.ContactPhone == "" && contactPhone != "" {
+		updates["contact_phone"] = contactPhone
+	}
+	if club.Province == "" && province != "" {
+		updates["province"] = province
+	}
+	if club.City == "" && city != "" {
+		updates["city"] = city
+	}
+	if len(updates) > 0 {
+		return club.ID, tx.Model(&models.Club{}).Where("id = ?", club.ID).Updates(updates).Error
+	}
 	return club.ID, nil
+}
+
+func (ctrl *AccountRoleController) ensureCoachProfile(tx *gorm.DB, user *models.User, profile map[string]interface{}) (uint, error) {
+	licenseType := stringFromProfile(profile, "license_type")
+	licenseNumber := stringFromProfile(profile, "license_number")
+	specialties := jsonArrayStringFromProfile(profile, "specialties", "specialty", "qualification")
+	style := jsonArrayStringFromProfile(profile, "style")
+	ageGroups := jsonArrayStringFromProfile(profile, "age_groups")
+	bio := firstRoleNonEmpty(stringFromProfile(profile, "bio"), stringFromProfile(profile, "summary"))
+	city := firstRoleNonEmpty(stringFromProfile(profile, "city"), user.City)
+	currentClub := firstRoleNonEmpty(stringFromProfile(profile, "current_club"), stringFromProfile(profile, "organization"), user.Club)
+	coachingYears := intFromProfile(profile, "coaching_years")
+
+	var coach models.Coach
+	err := tx.Where("user_id = ?", user.ID).First(&coach).Error
+	if err == gorm.ErrRecordNotFound {
+		coach = models.Coach{
+			UserID:        user.ID,
+			LicenseType:   licenseType,
+			LicenseNumber: licenseNumber,
+			Specialties:   specialties,
+			Style:         style,
+			AgeGroups:     ageGroups,
+			Bio:           bio,
+			CoachingYears: coachingYears,
+			CurrentClub:   currentClub,
+			City:          city,
+			Verified:      true,
+		}
+		if err := tx.Create(&coach).Error; err != nil {
+			return 0, err
+		}
+		return coach.ID, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	updates := map[string]interface{}{"verified": true}
+	if coach.LicenseType == "" && licenseType != "" {
+		updates["license_type"] = licenseType
+	}
+	if coach.LicenseNumber == "" && licenseNumber != "" {
+		updates["license_number"] = licenseNumber
+	}
+	if isEmptyRoleJSONField(coach.Specialties) && specialties != "" {
+		updates["specialties"] = specialties
+	}
+	if isEmptyRoleJSONField(coach.Style) && style != "" {
+		updates["style"] = style
+	}
+	if isEmptyRoleJSONField(coach.AgeGroups) && ageGroups != "" {
+		updates["age_groups"] = ageGroups
+	}
+	if coach.Bio == "" && bio != "" {
+		updates["bio"] = bio
+	}
+	if coach.CoachingYears == 0 && coachingYears > 0 {
+		updates["coaching_years"] = coachingYears
+	}
+	if coach.CurrentClub == "" && currentClub != "" {
+		updates["current_club"] = currentClub
+	}
+	if coach.City == "" && city != "" {
+		updates["city"] = city
+	}
+	return coach.ID, tx.Model(&models.Coach{}).Where("id = ?", coach.ID).Updates(updates).Error
 }
 
 func stringFromProfile(profile map[string]interface{}, key string) string {
@@ -646,6 +767,60 @@ func intFromProfile(profile map[string]interface{}, key string) int {
 		return 0
 	}
 	return parsed
+}
+
+func stringSliceFromProfile(profile map[string]interface{}, key string) []string {
+	value, ok := profile[key]
+	if !ok || value == nil {
+		return nil
+	}
+	items := make([]string, 0)
+	appendItem := func(raw string) {
+		for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
+			return r == ',' || r == '，' || r == '\n' || r == ';' || r == '；' || r == '|'
+		}) {
+			item := strings.TrimSpace(part)
+			if item != "" {
+				items = append(items, item)
+			}
+		}
+	}
+	switch v := value.(type) {
+	case []string:
+		for _, item := range v {
+			appendItem(item)
+		}
+	case []interface{}:
+		for _, item := range v {
+			appendItem(fmt.Sprint(item))
+		}
+	default:
+		appendItem(fmt.Sprint(v))
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	return items
+}
+
+func jsonArrayStringFromProfile(profile map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		items := stringSliceFromProfile(profile, key)
+		if len(items) == 0 {
+			continue
+		}
+		bytes, err := json.Marshal(items)
+		if err != nil {
+			return ""
+		}
+		return string(bytes)
+	}
+	return ""
+}
+
+func isEmptyRoleJSONField(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	return trimmed == "" || trimmed == "[]" || trimmed == "null"
 }
 
 func firstRoleNonEmpty(values ...string) string {

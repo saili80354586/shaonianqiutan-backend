@@ -382,7 +382,8 @@ type VideoAnalysis struct {
 	Assists       int    `json:"assists"`
 
 	// 视频信息
-	VideoURL string `json:"video_url" gorm:"size:500"`
+	VideoURL           string `json:"video_url" gorm:"size:500"`
+	VideoSecondHalfURL string `json:"video_second_half_url" gorm:"size:500"`
 
 	// ========== 核心评分数据 ==========
 	// 综合评分（1-100）

@@ -38,6 +38,7 @@ logs/
 
 # Runtime data
 /uploads/
+/controllers/uploads/
 /cache/
 
 # Coverage and temporary files

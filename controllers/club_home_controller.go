@@ -2,7 +2,10 @@ package controllers
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shaonianqiutan/backend/models"
@@ -24,6 +27,252 @@ func NewClubHomeController(clubHomeRepo *repositories.ClubHomeRepository, db *go
 
 // GetClubHome 获取俱乐部主页配置
 func (c *ClubHomeController) GetClubHome(ctx *gin.Context) {
+	c.getClubHome(ctx, false)
+}
+
+// GetClubHomeManage 获取俱乐部主页管理配置
+func (c *ClubHomeController) GetClubHomeManage(ctx *gin.Context) {
+	c.getClubHome(ctx, true)
+}
+
+// CreateHomeInquiry 提交公开主页咨询线索
+func (c *ClubHomeController) CreateHomeInquiry(ctx *gin.Context) {
+	clubID, ok := parseClubIDParam(ctx)
+	if !ok {
+		return
+	}
+
+	var club models.Club
+	if err := c.db.First(&club, clubID).Error; err != nil {
+		utils.NotFoundError(ctx, "俱乐部不存在")
+		return
+	}
+
+	var home models.ClubHome
+	if err := c.db.Where("club_id = ?", clubID).First(&home).Error; err != nil || home.PublishStatus != "published" {
+		utils.NotFoundError(ctx, "俱乐部主页尚未发布")
+		return
+	}
+
+	var req struct {
+		Name          string `json:"name"`
+		Phone         string `json:"phone"`
+		Wechat        string `json:"wechat"`
+		PlayerAge     int    `json:"playerAge"`
+		AgeGroup      string `json:"ageGroup"`
+		PreferredTime string `json:"preferredTime"`
+		Message       string `json:"message"`
+		Source        string `json:"source"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.ValidationError(ctx, "参数错误")
+		return
+	}
+
+	req.Name = strings.TrimSpace(req.Name)
+	req.Phone = strings.TrimSpace(req.Phone)
+	req.Wechat = strings.TrimSpace(req.Wechat)
+	req.AgeGroup = strings.TrimSpace(req.AgeGroup)
+	req.PreferredTime = strings.TrimSpace(req.PreferredTime)
+	req.Message = strings.TrimSpace(req.Message)
+	req.Source = strings.TrimSpace(req.Source)
+	if req.Source == "" {
+		req.Source = "club_home"
+	}
+
+	if req.Name == "" {
+		utils.ValidationError(ctx, "请填写联系人姓名")
+		return
+	}
+	if req.Phone == "" {
+		utils.ValidationError(ctx, "请填写联系电话")
+		return
+	}
+	if len(req.Name) > 40 || len(req.Phone) > 30 || len(req.Wechat) > 80 || len(req.Message) > 300 {
+		utils.ValidationError(ctx, "提交内容过长")
+		return
+	}
+	if req.PlayerAge < 0 || req.PlayerAge > 30 {
+		utils.ValidationError(ctx, "球员年龄不正确")
+		return
+	}
+
+	var duplicateCount int64
+	c.db.Model(&models.ClubHomeInquiry{}).
+		Where("club_id = ? AND phone = ? AND created_at >= ?", clubID, req.Phone, time.Now().Add(-10*time.Minute)).
+		Count(&duplicateCount)
+	if duplicateCount > 0 {
+		utils.ValidationError(ctx, "已收到你的咨询，请勿重复提交")
+		return
+	}
+
+	var userID *uint
+	if uid, exists := ctx.Get("userId"); exists {
+		if id, ok := uid.(uint); ok && id > 0 {
+			userID = &id
+		}
+	}
+
+	inquiry := models.ClubHomeInquiry{
+		ClubID:        uint(clubID),
+		UserID:        userID,
+		Name:          req.Name,
+		Phone:         req.Phone,
+		Wechat:        req.Wechat,
+		PlayerAge:     req.PlayerAge,
+		AgeGroup:      req.AgeGroup,
+		PreferredTime: req.PreferredTime,
+		Message:       req.Message,
+		Source:        req.Source,
+		Status:        "pending",
+	}
+	if err := c.db.Create(&inquiry).Error; err != nil {
+		utils.ServerError(ctx, "提交失败")
+		return
+	}
+
+	notification := &models.Notification{
+		UserID:   club.UserID,
+		Type:     models.NotificationTypeInquiry,
+		Title:    "收到新的主页试训咨询",
+		Content:  fmt.Sprintf("%s（%s）提交了试训咨询", inquiry.Name, inquiry.Phone),
+		IsRead:   false,
+		Priority: 2,
+	}
+	notification.SetData(&models.NotificationData{
+		TargetType: "club_home_inquiry",
+		TargetID:   inquiry.ID,
+		Link:       "/club/dashboard?tab=home-inquiries",
+	})
+	_ = c.db.Create(notification).Error
+
+	utils.SuccessResponseWithMessage(ctx, gin.H{"id": inquiry.ID}, "咨询已提交，俱乐部会尽快联系你")
+}
+
+// ListHomeInquiries 获取俱乐部主页咨询线索
+func (c *ClubHomeController) ListHomeInquiries(ctx *gin.Context) {
+	clubID, ok := parseClubIDParam(ctx)
+	if !ok {
+		return
+	}
+	status := strings.TrimSpace(ctx.Query("status"))
+	page, pageSize := parsePageParams(ctx)
+
+	query := c.db.Model(&models.ClubHomeInquiry{}).Where("club_id = ?", clubID)
+	if status != "" && status != "all" {
+		query = query.Where("status = ?", status)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		utils.ServerError(ctx, "查询失败")
+		return
+	}
+
+	var inquiries []models.ClubHomeInquiry
+	if err := query.Order("created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&inquiries).Error; err != nil {
+		utils.ServerError(ctx, "查询失败")
+		return
+	}
+
+	stats := map[string]int64{"all": 0, "pending": 0, "contacted": 0, "converted": 0, "closed": 0}
+	type statusCount struct {
+		Status string
+		Count  int64
+	}
+	var rows []statusCount
+	c.db.Model(&models.ClubHomeInquiry{}).Select("status, count(*) as count").Where("club_id = ?", clubID).Group("status").Scan(&rows)
+	for _, row := range rows {
+		stats["all"] += row.Count
+		if _, exists := stats[row.Status]; exists {
+			stats[row.Status] = row.Count
+		}
+	}
+
+	utils.SuccessResponse(ctx, gin.H{
+		"list":  inquiries,
+		"stats": stats,
+		"pagination": gin.H{
+			"page":       page,
+			"pageSize":   pageSize,
+			"total":      total,
+			"totalPages": (total + int64(pageSize) - 1) / int64(pageSize),
+		},
+	})
+}
+
+// UpdateHomeInquiryStatus 更新主页咨询线索状态
+func (c *ClubHomeController) UpdateHomeInquiryStatus(ctx *gin.Context) {
+	clubID, ok := parseClubIDParam(ctx)
+	if !ok {
+		return
+	}
+	inquiryID, err := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if err != nil || inquiryID == 0 {
+		utils.ValidationError(ctx, "无效的线索ID")
+		return
+	}
+
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.ValidationError(ctx, "参数错误")
+		return
+	}
+	req.Status = strings.TrimSpace(req.Status)
+	if !isHomeInquiryStatus(req.Status) {
+		utils.ValidationError(ctx, "无效的线索状态")
+		return
+	}
+
+	result := c.db.Model(&models.ClubHomeInquiry{}).
+		Where("id = ? AND club_id = ?", inquiryID, clubID).
+		Update("status", req.Status)
+	if result.Error != nil {
+		utils.ServerError(ctx, "更新失败")
+		return
+	}
+	if result.RowsAffected == 0 {
+		utils.NotFoundError(ctx, "线索不存在")
+		return
+	}
+
+	utils.SuccessResponseWithMessage(ctx, nil, "更新成功")
+}
+
+func isHomeInquiryStatus(status string) bool {
+	switch status {
+	case "pending", "contacted", "converted", "closed":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseClubIDParam(ctx *gin.Context) (uint64, bool) {
+	clubIDStr := ctx.Param("clubId")
+	clubID, err := strconv.ParseUint(clubIDStr, 10, 32)
+	if err != nil {
+		utils.ValidationError(ctx, "无效的俱乐部ID")
+		return 0, false
+	}
+	return clubID, true
+}
+
+func parsePageParams(ctx *gin.Context) (int, int) {
+	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(ctx.DefaultQuery("pageSize", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+	return page, pageSize
+}
+
+func (c *ClubHomeController) getClubHome(ctx *gin.Context, allowDraft bool) {
 	clubIDStr := ctx.Param("clubId")
 	clubID, err := strconv.ParseUint(clubIDStr, 10, 32)
 	if err != nil {
@@ -46,6 +295,10 @@ func (c *ClubHomeController) GetClubHome(ctx *gin.Context) {
 			utils.ServerError(ctx, "获取失败")
 			return
 		}
+	}
+	if !allowDraft && home.PublishStatus != "" && home.PublishStatus != "published" {
+		utils.NotFoundError(ctx, "俱乐部主页尚未发布")
+		return
 	}
 
 	// 解析模块排序
@@ -104,7 +357,7 @@ func (c *ClubHomeController) GetClubHome(ctx *gin.Context) {
 
 	var coachesData []map[string]interface{}
 	c.db.Table("team_coaches tc").
-		Select("tc.id, tc.user_id, u.name, u.nickname, u.avatar, tc.role, c.license_level").
+		Select("tc.id, tc.user_id, u.name, u.nickname, u.avatar, tc.role, c.license_type as license_level").
 		Joins("JOIN teams t ON t.id = tc.team_id").
 		Joins("JOIN users u ON u.id = tc.user_id").
 		Joins("LEFT JOIN coaches c ON c.user_id = tc.user_id").
@@ -174,10 +427,11 @@ func (c *ClubHomeController) GetClubHome(ctx *gin.Context) {
 
 	// 获取最近比赛
 	var matches []map[string]interface{}
-	c.db.Table("match_summaries").
-		Select("id, match_name as title, match_date as date, match_result as result, opponent, our_score, opponent_score").
-		Where("club_id = ?", clubID).
-		Order("match_date DESC").
+	c.db.Table("match_summaries ms").
+		Select("ms.id, ms.match_name as title, ms.match_date as date, ms.result, ms.opponent, ms.our_score, ms.opp_score as opponent_score").
+		Joins("JOIN teams t ON t.id = ms.team_id").
+		Where("t.club_id = ?", clubID).
+		Order("ms.match_date DESC").
 		Limit(3).
 		Scan(&matches)
 	for _, m := range matches {
@@ -222,6 +476,14 @@ func (c *ClubHomeController) GetClubHome(ctx *gin.Context) {
 			"order":      moduleOrder,
 			"visibility": home.ModuleVisibility,
 		},
+		"publish": gin.H{
+			"status":          home.PublishStatus,
+			"publishedAt":     home.PublishedAt,
+			"completionScore": home.CompletionScore,
+			"templateType":    home.TemplateType,
+			"shareSlug":       home.ShareSlug,
+			"publicUrl":       fmt.Sprintf("/clubs/%d", clubID),
+		},
 		"hero":         home.Hero,
 		"about":        home.About,
 		"achievements": achievements,
@@ -233,8 +495,8 @@ func (c *ClubHomeController) GetClubHome(ctx *gin.Context) {
 		"contact":      home.Contact,
 		"socialLinks":  home.SocialLinks,
 		"news": gin.H{
-			"matches": matches,
-			"tests":   tests,
+			"matches":     matches,
+			"tests":       tests,
 			"manualItems": home.NewsItems,
 		},
 		"activities": activities,
@@ -269,6 +531,8 @@ func (c *ClubHomeController) SaveClubHome(ctx *gin.Context) {
 		ModuleOrder      []string                    `json:"moduleOrder"`
 		ModuleVisibility map[string]bool             `json:"moduleVisibility"`
 		Achievements     []models.Achievement        `json:"achievements"`
+		TemplateType     string                      `json:"templateType"`
+		CompletionScore  *int                        `json:"completionScore"`
 	}
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -306,6 +570,12 @@ func (c *ClubHomeController) SaveClubHome(ctx *gin.Context) {
 	if req.ModuleVisibility != nil {
 		home.ModuleVisibility = req.ModuleVisibility
 	}
+	if req.TemplateType != "" {
+		home.TemplateType = req.TemplateType
+	}
+	if req.CompletionScore != nil {
+		home.CompletionScore = clampScore(*req.CompletionScore)
+	}
 
 	if err := c.clubHomeRepo.Save(home); err != nil {
 		utils.ServerError(ctx, "保存失败")
@@ -317,6 +587,93 @@ func (c *ClubHomeController) SaveClubHome(ctx *gin.Context) {
 	}
 
 	utils.SuccessResponseWithMessage(ctx, gin.H{"id": home.ID}, "保存成功")
+}
+
+// PublishClubHome 发布俱乐部主页
+func (c *ClubHomeController) PublishClubHome(ctx *gin.Context) {
+	clubIDStr := ctx.Param("clubId")
+	clubID, err := strconv.ParseUint(clubIDStr, 10, 32)
+	if err != nil {
+		utils.ValidationError(ctx, "无效的俱乐部ID")
+		return
+	}
+
+	var req struct {
+		TemplateType    string `json:"templateType"`
+		CompletionScore int    `json:"completionScore"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.ValidationError(ctx, "参数错误")
+		return
+	}
+
+	home, err := c.clubHomeRepo.FindByClubID(uint(clubID))
+	if err != nil {
+		home = models.DefaultClubHome(uint(clubID))
+	}
+
+	var club models.Club
+	if err := c.db.First(&club, clubID).Error; err != nil {
+		utils.NotFoundError(ctx, "俱乐部不存在")
+		return
+	}
+
+	missing := validateClubHomeBeforePublish(&club, home)
+	if len(missing) > 0 {
+		utils.ValidationError(ctx, "发布前请先补齐："+strings.Join(missing, "、"))
+		return
+	}
+
+	now := time.Now()
+	home.PublishStatus = "published"
+	home.PublishedAt = &now
+	home.CompletionScore = clampScore(req.CompletionScore)
+	if req.TemplateType != "" {
+		home.TemplateType = req.TemplateType
+	}
+	if home.ShareSlug == "" {
+		home.ShareSlug = fmt.Sprintf("club-%d", clubID)
+	}
+
+	if err := c.clubHomeRepo.Save(home); err != nil {
+		utils.ServerError(ctx, "发布失败")
+		return
+	}
+
+	publicURL := fmt.Sprintf("/clubs/%d", clubID)
+	utils.SuccessResponseWithMessage(ctx, gin.H{
+		"status":          home.PublishStatus,
+		"publishedAt":     home.PublishedAt,
+		"completionScore": home.CompletionScore,
+		"templateType":    home.TemplateType,
+		"shareSlug":       home.ShareSlug,
+		"publicUrl":       publicURL,
+		"qrText":          publicURL,
+	}, "发布成功")
+}
+
+func validateClubHomeBeforePublish(club *models.Club, home *models.ClubHome) []string {
+	missing := make([]string, 0)
+	if strings.TrimSpace(club.Name) == "" && strings.TrimSpace(home.Hero.Title) == "" {
+		missing = append(missing, "俱乐部名称或主页标题")
+	}
+	if strings.TrimSpace(home.Contact.Phone) == "" && strings.TrimSpace(home.Recruitment.ContactPhone) == "" && strings.TrimSpace(club.ContactPhone) == "" {
+		missing = append(missing, "咨询电话")
+	}
+	if strings.TrimSpace(home.About.Content) == "" && strings.TrimSpace(club.Description) == "" && strings.TrimSpace(home.Hero.Subtitle) == "" {
+		missing = append(missing, "俱乐部简介")
+	}
+	return missing
+}
+
+func clampScore(score int) int {
+	if score < 0 {
+		return 0
+	}
+	if score > 100 {
+		return 100
+	}
+	return score
 }
 
 // UpdateHero 更新 Hero 配置
@@ -587,10 +944,11 @@ func (c *ClubHomeController) GetNews(ctx *gin.Context) {
 
 	// 获取最近比赛
 	var matches []map[string]interface{}
-	c.db.Table("match_summaries").
-		Select("id, match_name as title, match_date as date, match_result as result, opponent, our_score, opponent_score").
-		Where("club_id = ?", clubID).
-		Order("match_date DESC").
+	c.db.Table("match_summaries ms").
+		Select("ms.id, ms.match_name as title, ms.match_date as date, ms.result, ms.opponent, ms.our_score, ms.opp_score as opponent_score").
+		Joins("JOIN teams t ON t.id = ms.team_id").
+		Where("t.club_id = ?", clubID).
+		Order("ms.match_date DESC").
 		Limit(3).
 		Scan(&matches)
 
@@ -611,11 +969,18 @@ func (c *ClubHomeController) GetNews(ctx *gin.Context) {
 		t["type"] = "physical_test"
 	}
 
+	manualItems := []models.ClubHomeNewsItem{}
+	if home, err := c.clubHomeRepo.FindByClubID(uint(clubID)); err == nil && home.NewsItems != nil {
+		manualItems = home.NewsItems
+	}
+
 	utils.SuccessResponse(ctx, gin.H{
+		"matches": matches,
+		"tests":   tests,
 		"autoItems": gin.H{
 			"matches": matches,
 			"tests":   tests,
 		},
-		"manualItems": []map[string]interface{}{},
+		"manualItems": manualItems,
 	})
 }

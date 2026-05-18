@@ -537,8 +537,8 @@ func (s *SocialService) CreatePost(userID uint, content string, images []string,
 }
 
 // GetFeedPosts 获取动态流
-func (s *SocialService) GetFeedPosts(roleTag string, page, pageSize int) ([]models.Post, int64, error) {
-	return s.repo.GetFeedPosts(roleTag, page, pageSize)
+func (s *SocialService) GetFeedPosts(roleTag string, province string, city string, page, pageSize int) ([]models.Post, int64, error) {
+	return s.repo.GetFeedPosts(roleTag, province, city, page, pageSize)
 }
 
 // GetUserPosts 获取用户帖子

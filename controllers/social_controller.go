@@ -386,6 +386,8 @@ func (c *SocialController) GetAchievements(ctx *gin.Context) {
 // GetFeed 获取动态流
 func (c *SocialController) GetFeed(ctx *gin.Context) {
 	roleTag := ctx.DefaultQuery("role_tag", "all")
+	province := ctx.Query("province")
+	city := ctx.Query("city")
 	pagination := utils.ParsePagination(ctx)
 	page := pagination.Page
 	pageSize := pagination.PageSize
@@ -404,7 +406,7 @@ func (c *SocialController) GetFeed(ctx *gin.Context) {
 			return
 		}
 	} else {
-		posts, total, err = c.socialService.GetFeedPosts(roleTag, page, pageSize)
+		posts, total, err = c.socialService.GetFeedPosts(roleTag, province, city, page, pageSize)
 	}
 
 	if err != nil {
@@ -422,6 +424,8 @@ func (c *SocialController) GetFeed(ctx *gin.Context) {
 		authorName := ""
 		authorAvatar := ""
 		authorRole := ""
+		authorProvince := ""
+		authorCity := ""
 		if p.User != nil {
 			authorName = p.User.Name
 			if p.User.Nickname != "" {
@@ -429,6 +433,8 @@ func (c *SocialController) GetFeed(ctx *gin.Context) {
 			}
 			authorAvatar = p.User.Avatar
 			authorRole = string(p.User.Role)
+			authorProvince = p.User.Province
+			authorCity = p.User.City
 		}
 		result = append(result, gin.H{
 			"id":             p.ID,
@@ -444,9 +450,11 @@ func (c *SocialController) GetFeed(ctx *gin.Context) {
 			"is_liked":       isLiked,
 			"created_at":     p.CreatedAt,
 			"author": gin.H{
-				"name":   authorName,
-				"avatar": authorAvatar,
-				"role":   authorRole,
+				"name":     authorName,
+				"avatar":   authorAvatar,
+				"role":     authorRole,
+				"province": authorProvince,
+				"city":     authorCity,
 			},
 		})
 	}

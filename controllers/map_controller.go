@@ -27,6 +27,58 @@ func NewMapController() *MapController {
 	return &MapController{}
 }
 
+const (
+	dataVChinaGeoJSONURL    = "https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json"
+	dataVProvinceGeoJSONURL = "https://geo.datav.aliyun.com/areas_v3/bound/%s_full.json"
+)
+
+func (ctrl *MapController) proxyDataVGeoJSON(c *gin.Context, geoURL string) {
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, geoURL, nil)
+	if err != nil {
+		utils.Error(c, http.StatusBadGateway, "地图底图请求失败")
+		return
+	}
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		utils.Error(c, http.StatusBadGateway, "地图底图请求失败")
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		utils.Error(c, http.StatusBadGateway, "地图底图数据加载失败")
+		return
+	}
+
+	c.DataFromReader(http.StatusOK, resp.ContentLength, "application/json; charset=utf-8", resp.Body, map[string]string{
+		"Cache-Control": "public, max-age=86400",
+	})
+}
+
+// ProxyChinaGeoJSON 代理全国地图 GeoJSON，避免浏览器直连 DataV 资源被拦截
+func (ctrl *MapController) ProxyChinaGeoJSON(c *gin.Context) {
+	ctrl.proxyDataVGeoJSON(c, dataVChinaGeoJSONURL)
+}
+
+// ProxyProvinceGeoJSON 代理省份地图 GeoJSON，避免浏览器直连 DataV 资源被拦截
+func (ctrl *MapController) ProxyProvinceGeoJSON(c *gin.Context) {
+	code := strings.TrimSpace(c.Param("code"))
+	if len(code) != 6 {
+		utils.Error(c, http.StatusBadRequest, "无效的地图编码")
+		return
+	}
+	if _, err := strconv.Atoi(code); err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的地图编码")
+		return
+	}
+
+	ctrl.proxyDataVGeoJSON(c, fmt.Sprintf(dataVProvinceGeoJSONURL, code))
+}
+
 // NationalMapResponse 全国地图响应
 type NationalMapResponse struct {
 	Provinces []ProvinceAggregate `json:"provinces"`
@@ -736,6 +788,146 @@ type DashboardStats struct {
 	GrowthTrend          []gin.H `json:"growthTrend"`
 }
 
+type CityHotlistPlayer struct {
+	ID        uint    `json:"id"`
+	Name      string  `json:"name"`
+	Avatar    string  `json:"avatar"`
+	Position  string  `json:"position"`
+	Age       int     `json:"age"`
+	Score     float64 `json:"score"`
+	Potential string  `json:"potential"`
+	Province  string  `json:"province"`
+	City      string  `json:"city"`
+}
+
+type CityHotlistClub struct {
+	ID               uint   `json:"id"`
+	Name             string `json:"name"`
+	Logo             string `json:"logo"`
+	ActivityCount    int64  `json:"activityCount"`
+	ParticipantCount int64  `json:"participantCount"`
+}
+
+type CityHotlistActivity struct {
+	ID                  uint      `json:"id"`
+	Title               string    `json:"title"`
+	Type                string    `json:"type"`
+	ClubID              uint      `json:"clubId"`
+	ClubName            string    `json:"clubName"`
+	ClubLogo            string    `json:"clubLogo"`
+	Province            string    `json:"province"`
+	City                string    `json:"city"`
+	StartTime           string    `json:"startTime"`
+	StartTimeRaw        time.Time `json:"-"`
+	CurrentParticipants int64     `json:"currentParticipants"`
+}
+
+type CityHotlistItem struct {
+	Province           string               `json:"province"`
+	City               string               `json:"city"`
+	PlayerCount        int64                `json:"playerCount"`
+	ClubCount          int64                `json:"clubCount"`
+	AvgScore           float64              `json:"avgScore"`
+	RisingStar         *CityHotlistPlayer   `json:"risingStar,omitempty"`
+	ActiveClub         *CityHotlistClub     `json:"activeClub,omitempty"`
+	HotActivity        *CityHotlistActivity `json:"hotActivity,omitempty"`
+	ReportCoverageRate *float64             `json:"reportCoverageRate,omitempty"`
+	CoverageGap        *float64             `json:"coverageGap,omitempty"`
+	ActivityCount      int64                `json:"activityCount"`
+	HotScore           float64              `json:"hotScore"`
+}
+
+type cityHotlistGroup struct {
+	Province         string
+	City             string
+	PlayerCount      int64
+	ClubCount        int64
+	TotalScore       float64
+	ScoredCount      int64
+	ActivityCount    int64
+	ParticipantCount int64
+	ReportCovered    int64
+	RisingStar       *CityHotlistPlayer
+	ActiveClub       *CityHotlistClub
+	ClubStats        map[uint]*CityHotlistClub
+	HotActivity      *CityHotlistActivity
+}
+
+func normalizeMapScopeName(value string) string {
+	value = strings.TrimSpace(value)
+	for _, suffix := range []string{"特别行政区", "自治区", "省", "市"} {
+		value = strings.TrimSuffix(value, suffix)
+	}
+	return value
+}
+
+func cityHotlistKey(province, city string) string {
+	return normalizeMapScopeName(province) + "|" + normalizeMapScopeName(city)
+}
+
+func mapScopeLikeQuery(value string) string {
+	value = normalizeMapScopeName(value)
+	if value == "" {
+		return ""
+	}
+	return "%" + value + "%"
+}
+
+func mapCoverageRateLabel(rate float64) float64 {
+	if rate <= 0 {
+		return 0
+	}
+	if rate > 1 {
+		rate = rate / 100
+	}
+	return rate
+}
+
+func coveredMapUsersByScoutReports(db *gorm.DB, users []models.User) map[uint]bool {
+	covered := make(map[uint]bool, len(users))
+	if len(users) == 0 {
+		return covered
+	}
+
+	userIDs := make([]uint, 0, len(users))
+	for _, user := range users {
+		userIDs = append(userIDs, user.ID)
+	}
+	reportPlayerIDsByUser := reportPlayerIDsByUserID(db, userIDs)
+	reportPlayerToUser := make(map[uint]uint, len(users)*2)
+	reportPlayerIDs := make([]uint, 0, len(users)*2)
+	for _, userID := range userIDs {
+		for _, reportPlayerID := range reportPlayerIDsByUser[userID] {
+			reportPlayerToUser[reportPlayerID] = userID
+			reportPlayerIDs = append(reportPlayerIDs, reportPlayerID)
+		}
+	}
+
+	var rows []struct {
+		PlayerID uint
+	}
+	if err := db.Model(&models.ScoutReport{}).
+		Select("DISTINCT player_id").
+		Where("player_id IN ? AND status IN ?", reportPlayerIDs, []string{"published", "adopted"}).
+		Find(&rows).Error; err != nil {
+		return covered
+	}
+
+	for _, row := range rows {
+		if userID, ok := reportPlayerToUser[row.PlayerID]; ok && userID > 0 {
+			covered[userID] = true
+		}
+	}
+	return covered
+}
+
+func parseCityHotlistScope(queryValue string, fallback string) string {
+	if strings.TrimSpace(queryValue) != "" {
+		return normalizeMapScopeName(queryValue)
+	}
+	return normalizeMapScopeName(fallback)
+}
+
 // GetDashboardStats 获取数据看板统计
 func (ctrl *MapController) GetDashboardStats(c *gin.Context) {
 	db := config.GetDB()
@@ -881,6 +1073,305 @@ func (ctrl *MapController) GetDashboardStats(c *gin.Context) {
 	utils.Success(c, "", stats)
 }
 
+// GetCityHotlist 获取城市足球热榜
+func (ctrl *MapController) GetCityHotlist(c *gin.Context) {
+	db := config.GetDB()
+
+	limit := 3
+	if limitStr := strings.TrimSpace(c.Query("limit")); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			if parsed > 8 {
+				parsed = 8
+			}
+			limit = parsed
+		}
+	}
+
+	scopeProvince := parseCityHotlistScope(c.Query("province"), "")
+	scopeCity := parseCityHotlistScope(c.Query("city"), "")
+
+	var users []models.User
+	userQuery := db.Where("role = ? AND status = ? AND city <> ''", "user", "active")
+	if scopeProvince != "" {
+		userQuery = userQuery.Where("province LIKE ?", mapScopeLikeQuery(scopeProvince))
+	}
+	if scopeCity != "" {
+		userQuery = userQuery.Where("city LIKE ?", mapScopeLikeQuery(scopeCity))
+	}
+	if err := userQuery.Find(&users).Error; err != nil {
+		utils.Error(c, http.StatusInternalServerError, "查询球员数据失败")
+		return
+	}
+
+	var clubs []models.Club
+	clubQuery := db.Where("city <> '' AND deleted_at IS NULL")
+	if scopeProvince != "" {
+		clubQuery = clubQuery.Where("province LIKE ?", mapScopeLikeQuery(scopeProvince))
+	}
+	if scopeCity != "" {
+		clubQuery = clubQuery.Where("city LIKE ?", mapScopeLikeQuery(scopeCity))
+	}
+	if err := clubQuery.Find(&clubs).Error; err != nil {
+		utils.Error(c, http.StatusInternalServerError, "查询俱乐部数据失败")
+		return
+	}
+
+	var activities []models.ClubActivity
+	activityQuery := db.Where("publish_status = ? AND status IN ?", "published", []string{"upcoming", "ongoing"})
+	activityQuery = applyActivityTimeRange(c, activityQuery, 30)
+	if err := activityQuery.Order("start_time ASC").Find(&activities).Error; err != nil {
+		utils.Error(c, http.StatusInternalServerError, "查询活动数据失败")
+		return
+	}
+
+	type activityMeta struct {
+		activity            models.ClubActivity
+		province            string
+		city                string
+		clubName            string
+		clubLogo            string
+		currentParticipants int64
+	}
+
+	clubMetaMap := make(map[uint]struct{ name, logo string }, len(clubs))
+	for _, club := range clubs {
+		clubMetaMap[club.ID] = struct{ name, logo string }{name: club.Name, logo: club.Logo}
+	}
+
+	registrationCounts := make(map[uint]int64, len(activities))
+	activityIDs := make([]uint, 0, len(activities))
+	for _, activity := range activities {
+		activityIDs = append(activityIDs, activity.ID)
+	}
+	if len(activityIDs) > 0 {
+		var rows []struct {
+			ActivityID uint
+			Count      int64
+		}
+		if err := db.Model(&models.ClubActivityRegistration{}).
+			Select("activity_id, COUNT(*) as count").
+			Where("activity_id IN ? AND status IN ?", activityIDs, activeActivityRegistrationStatuses).
+			Group("activity_id").
+			Scan(&rows).Error; err == nil {
+			for _, row := range rows {
+				registrationCounts[row.ActivityID] = row.Count
+			}
+		}
+	}
+
+	groups := make(map[string]*cityHotlistGroup)
+	ensureGroup := func(province, city string) *cityHotlistGroup {
+		key := cityHotlistKey(province, city)
+		if groups[key] == nil {
+			groups[key] = &cityHotlistGroup{
+				Province:  strings.TrimSpace(province),
+				City:      strings.TrimSpace(city),
+				ClubStats: make(map[uint]*CityHotlistClub),
+			}
+		}
+		return groups[key]
+	}
+
+	scoreIndex := buildTraceablePlayerScoreIndex(db, users)
+	coveredUsers := coveredMapUsersByScoutReports(db, users)
+	starCandidates := make([]models.User, len(users))
+	copy(starCandidates, users)
+	sort.SliceStable(starCandidates, func(i, j int) bool {
+		left := scoreIndex[starCandidates[i].ID]
+		right := scoreIndex[starCandidates[j].ID]
+		if left.HasScore != right.HasScore {
+			return left.HasScore
+		}
+		if left.Score != right.Score {
+			return left.Score > right.Score
+		}
+		if starCandidates[i].UpdatedAt.Equal(starCandidates[j].UpdatedAt) {
+			return starCandidates[i].ID < starCandidates[j].ID
+		}
+		return starCandidates[i].UpdatedAt.After(starCandidates[j].UpdatedAt)
+	})
+
+	for _, user := range users {
+		if user.City == "" {
+			continue
+		}
+		group := ensureGroup(user.Province, user.City)
+		group.PlayerCount++
+		if scoreDetail, ok := scoreIndex[user.ID]; ok {
+			group.TotalScore += scoreDetail.Score
+			if scoreDetail.HasScore {
+				group.ScoredCount++
+			}
+		}
+		if coveredUsers[user.ID] {
+			group.ReportCovered++
+		}
+	}
+
+	for _, user := range starCandidates {
+		if user.City == "" {
+			continue
+		}
+		group := ensureGroup(user.Province, user.City)
+		if group.RisingStar != nil {
+			continue
+		}
+		scoreDetail := scoreIndex[user.ID]
+		group.RisingStar = &CityHotlistPlayer{
+			ID:        user.ID,
+			Name:      user.Name,
+			Avatar:    user.Avatar,
+			Position:  user.Position,
+			Age:       user.Age,
+			Score:     scoreDetail.Score,
+			Potential: scoreDetail.Potential,
+			Province:  user.Province,
+			City:      user.City,
+		}
+	}
+
+	for _, club := range clubs {
+		if club.City == "" {
+			continue
+		}
+		group := ensureGroup(club.Province, club.City)
+		group.ClubCount++
+	}
+
+	for _, a := range activities {
+		province, city, _ := parseLocation(a.Location)
+		if city == "" {
+			continue
+		}
+		if scopeProvince != "" && !strings.Contains(normalizeMapScopeName(province), scopeProvince) {
+			continue
+		}
+		if scopeCity != "" && !strings.Contains(normalizeMapScopeName(city), scopeCity) {
+			continue
+		}
+		group := ensureGroup(province, city)
+		regCount := registrationCounts[a.ID]
+		clubMeta, ok := clubMetaMap[a.ClubID]
+		clubName := ""
+		clubLogo := ""
+		if ok {
+			clubName = clubMeta.name
+			clubLogo = clubMeta.logo
+		}
+		activity := &CityHotlistActivity{
+			ID:                  a.ID,
+			Title:               a.Title,
+			Type:                mapActivityType(a.Type),
+			ClubID:              a.ClubID,
+			ClubName:            clubName,
+			ClubLogo:            clubLogo,
+			Province:            province,
+			City:                city,
+			StartTime:           a.StartTime.Format("2006-01-02 15:04"),
+			StartTimeRaw:        a.StartTime,
+			CurrentParticipants: regCount,
+		}
+		group.ActivityCount++
+		group.ParticipantCount += regCount
+		clubStat := group.ClubStats[a.ClubID]
+		if clubStat == nil {
+			clubStat = &CityHotlistClub{
+				ID:   a.ClubID,
+				Name: clubName,
+				Logo: clubLogo,
+			}
+			group.ClubStats[a.ClubID] = clubStat
+		}
+		clubStat.ActivityCount++
+		clubStat.ParticipantCount += regCount
+		if group.HotActivity == nil || regCount > group.HotActivity.CurrentParticipants || (regCount == group.HotActivity.CurrentParticipants && a.StartTime.Before(group.HotActivity.StartTimeRaw)) {
+			group.HotActivity = activity
+		}
+	}
+
+	items := make([]CityHotlistItem, 0, len(groups))
+	for _, group := range groups {
+		if group.PlayerCount == 0 && group.ActivityCount == 0 && group.ClubCount == 0 {
+			continue
+		}
+		var avgScore float64
+		if group.ScoredCount > 0 {
+			avgScore = math.Round((group.TotalScore/float64(group.ScoredCount))*10) / 10
+		}
+		var activeClub *CityHotlistClub
+		for _, club := range group.ClubStats {
+			if club == nil {
+				continue
+			}
+			if activeClub == nil || club.ActivityCount > activeClub.ActivityCount || (club.ActivityCount == activeClub.ActivityCount && club.ParticipantCount > activeClub.ParticipantCount) || (club.ActivityCount == activeClub.ActivityCount && club.ParticipantCount == activeClub.ParticipantCount && club.ID < activeClub.ID) {
+				cloned := *club
+				activeClub = &cloned
+			}
+		}
+		var coverageRate *float64
+		var coverageGap *float64
+		if group.PlayerCount > 0 {
+			rate := math.Round((float64(group.ReportCovered)/float64(group.PlayerCount))*1000) / 10
+			gap := math.Round((100-rate)*10) / 10
+			coverageRate = &rate
+			coverageGap = &gap
+		}
+		hotScore := float64(group.PlayerCount)*1.5 + float64(group.ActivityCount)*12 + float64(group.ParticipantCount)*0.8
+		if coverageGap != nil {
+			hotScore += *coverageGap
+		}
+		items = append(items, CityHotlistItem{
+			Province:           group.Province,
+			City:               group.City,
+			PlayerCount:        group.PlayerCount,
+			ClubCount:          group.ClubCount,
+			AvgScore:           avgScore,
+			RisingStar:         group.RisingStar,
+			ActiveClub:         activeClub,
+			HotActivity:        group.HotActivity,
+			ReportCoverageRate: coverageRate,
+			CoverageGap:        coverageGap,
+			ActivityCount:      group.ActivityCount,
+			HotScore:           math.Round(hotScore*10) / 10,
+		})
+	}
+
+	sort.SliceStable(items, func(i, j int) bool {
+		if scopeCity != "" {
+			iSelected := normalizeMapScopeName(items[i].City) == scopeCity && (scopeProvince == "" || normalizeMapScopeName(items[i].Province) == scopeProvince)
+			jSelected := normalizeMapScopeName(items[j].City) == scopeCity && (scopeProvince == "" || normalizeMapScopeName(items[j].Province) == scopeProvince)
+			if iSelected != jSelected {
+				return iSelected
+			}
+		}
+		if items[i].HotScore != items[j].HotScore {
+			return items[i].HotScore > items[j].HotScore
+		}
+		if items[i].ActivityCount != items[j].ActivityCount {
+			return items[i].ActivityCount > items[j].ActivityCount
+		}
+		if items[i].PlayerCount != items[j].PlayerCount {
+			return items[i].PlayerCount > items[j].PlayerCount
+		}
+		if items[i].City == items[j].City {
+			return items[i].Province < items[j].Province
+		}
+		return items[i].City < items[j].City
+	})
+
+	if len(items) > limit {
+		items = items[:limit]
+	}
+
+	utils.Success(c, "", gin.H{
+		"items":     items,
+		"updatedAt": time.Now().Format(time.RFC3339),
+		"province":  scopeProvince,
+		"city":      scopeCity,
+		"limit":     limit,
+	})
+}
+
 // GetOverseasPlayers 获取海外球员列表
 func (ctrl *MapController) GetOverseasPlayers(c *gin.Context) {
 	db := config.GetDB()
@@ -894,7 +1385,7 @@ func (ctrl *MapController) GetOverseasPlayers(c *gin.Context) {
 		return
 	}
 
-	var players []gin.H
+	players := make([]gin.H, 0, len(users))
 	scoreIndex := buildTraceablePlayerScoreIndex(db, users)
 	for _, u := range users {
 		scoreDetail := scoreIndex[u.ID]

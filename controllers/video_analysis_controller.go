@@ -100,22 +100,33 @@ func (ctrl *VideoAnalysisController) getOwnedAnalysisByID(c *gin.Context, id uin
 }
 
 func (ctrl *VideoAnalysisController) hydrateAnalysisVideoURL(analysis *models.VideoAnalysis) {
-	if analysis == nil || strings.TrimSpace(analysis.VideoURL) != "" || analysis.OrderID == 0 {
+	if analysis == nil || (strings.TrimSpace(analysis.VideoURL) != "" && strings.TrimSpace(analysis.VideoSecondHalfURL) != "") || analysis.OrderID == 0 {
 		return
 	}
 
 	var order models.Order
-	if err := ctrl.db.Select("video_url").First(&order, analysis.OrderID).Error; err != nil {
+	if err := ctrl.db.Select("video_url", "video_second_half_url").First(&order, analysis.OrderID).Error; err != nil {
 		return
 	}
-	if strings.TrimSpace(order.VideoURL) == "" {
+	if strings.TrimSpace(order.VideoURL) == "" && strings.TrimSpace(order.VideoSecondHalfURL) == "" {
 		return
 	}
 
-	analysis.VideoURL = order.VideoURL
+	updates := map[string]interface{}{}
+	if strings.TrimSpace(analysis.VideoURL) == "" && strings.TrimSpace(order.VideoURL) != "" {
+		analysis.VideoURL = order.VideoURL
+		updates["video_url"] = order.VideoURL
+	}
+	if strings.TrimSpace(analysis.VideoSecondHalfURL) == "" && strings.TrimSpace(order.VideoSecondHalfURL) != "" {
+		analysis.VideoSecondHalfURL = order.VideoSecondHalfURL
+		updates["video_second_half_url"] = order.VideoSecondHalfURL
+	}
+	if len(updates) == 0 {
+		return
+	}
 	if err := ctrl.db.Model(&models.VideoAnalysis{}).
-		Where("id = ? AND (video_url = '' OR video_url IS NULL)", analysis.ID).
-		Update("video_url", order.VideoURL).Error; err != nil {
+		Where("id = ?", analysis.ID).
+		Updates(updates).Error; err != nil {
 		log.Printf("[VideoAnalysis] hydrate video_url for analysis %d failed: %v", analysis.ID, err)
 	}
 }
@@ -183,6 +194,22 @@ func (ctrl *VideoAnalysisController) notifyAdminsReportSubmitted(reportID uint, 
 
 	if err := ctrl.notificationService.NotifyReportPendingReview(adminIDs, reportID, playerName); err != nil {
 		log.Printf("[VideoAnalysis] notify admins for report %d failed: %v", reportID, err)
+	}
+}
+
+func (ctrl *VideoAnalysisController) notifyAnalystAIReportFailed(analysis *models.VideoAnalysis, reportID uint, reason string) {
+	if ctrl.notificationService == nil || analysis == nil || analysis.AnalystID == 0 || analysis.OrderID == 0 {
+		return
+	}
+
+	var analyst models.Analyst
+	if err := ctrl.db.Select("id", "user_id").First(&analyst, analysis.AnalystID).Error; err != nil {
+		log.Printf("[VideoAnalysis] query analyst %d for AI failure notification failed: %v", analysis.AnalystID, err)
+		return
+	}
+
+	if err := ctrl.notificationService.NotifyAnalystAIReportFailed(analyst.UserID, analysis.OrderID, analysis.ID, reportID, analysis.PlayerName, reason); err != nil {
+		log.Printf("[VideoAnalysis] notify analyst %d for AI failure on analysis %d failed: %v", analyst.ID, analysis.ID, err)
 	}
 }
 
@@ -2417,6 +2444,7 @@ func (ctrl *VideoAnalysisController) startAIReportGeneration(analysisID uint, re
 					"report_id": reportID,
 					"error":     fmt.Sprintf("%v", r),
 				})
+				ctrl.notifyAnalystAIReportFailed(analysis, reportID, fmt.Sprintf("%v", r))
 			}
 		}()
 
@@ -2444,6 +2472,7 @@ func (ctrl *VideoAnalysisController) startAIReportGeneration(analysisID uint, re
 				"report_id": reportID,
 				"reason":    "missing_report_input",
 			})
+			ctrl.notifyAnalystAIReportFailed(analysis, reportID, "缺少评分或报告输入数据")
 			return
 		}
 
@@ -2472,6 +2501,7 @@ func (ctrl *VideoAnalysisController) startAIReportGeneration(analysisID uint, re
 				"report_id": reportID,
 				"error":     err.Error(),
 			})
+			ctrl.notifyAnalystAIReportFailed(analysis, reportID, err.Error())
 			return
 		}
 
@@ -2488,6 +2518,7 @@ func (ctrl *VideoAnalysisController) startAIReportGeneration(analysisID uint, re
 				"report_id": reportID,
 				"error":     err.Error(),
 			})
+			ctrl.notifyAnalystAIReportFailed(analysis, reportID, "AI报告保存失败: "+err.Error())
 			return
 		}
 		analysis.AIReport = aiReport
@@ -2539,6 +2570,7 @@ func (ctrl *VideoAnalysisController) startAIReportGeneration(analysisID uint, re
 				"report_id": reportID,
 				"error":     err.Error(),
 			})
+			ctrl.notifyAnalystAIReportFailed(analysis, reportID, "报告记录更新失败: "+err.Error())
 			return
 		}
 		ctrl.appendReportVersion(&models.ReportVersion{
@@ -2563,6 +2595,25 @@ func (ctrl *VideoAnalysisController) startAIReportGeneration(analysisID uint, re
 			"pdf_url":       stringValue(reportUpdates["pdf_url"]),
 		})
 	}()
+}
+
+func isAIReportGenerationRunning(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "generating", "regenerating":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldAutoStartAIReportGeneration(analysis *models.VideoAnalysis) bool {
+	if analysis == nil {
+		return false
+	}
+	if isAIReportGenerationRunning(analysis.AIReportStatus) {
+		return false
+	}
+	return strings.TrimSpace(analysis.AIReport) == ""
 }
 
 // GenerateAIReportRequest AI报告生成请求
@@ -2603,12 +2654,22 @@ func (ctrl *VideoAnalysisController) GenerateAIReport(c *gin.Context) {
 		nextStatus = "regenerating"
 	}
 
+	reportID := uint(0)
+	reportRepo := models.NewReportRepository(ctrl.db)
+	if report, _ := reportRepo.FindByOrderID(analysis.OrderID); report != nil {
+		if report.Status == models.ReportStatusCompleted {
+			utils.Error(c, http.StatusBadRequest, "已交付报告不能直接重新生成，请联系管理员处理")
+			return
+		}
+		reportID = report.ID
+	}
+
 	// 更新状态为生成中
 	ctrl.analysisRepo.Update(req.AnalysisID, map[string]interface{}{
 		"ai_report_status": nextStatus,
 	})
 
-	ctrl.startAIReportGeneration(req.AnalysisID, 0, analysis.AIReportVersion+1, nextStatus)
+	ctrl.startAIReportGeneration(req.AnalysisID, reportID, analysis.AIReportVersion+1, nextStatus)
 
 	utils.Success(c, "AI报告生成任务已提交，预计需要3-5分钟", gin.H{
 		"status": nextStatus,
@@ -2637,6 +2698,7 @@ func (ctrl *VideoAnalysisController) UpdateAIReport(c *gin.Context) {
 		return
 	}
 
+	previousReport := analysis.AIReport
 	nextVersion := analysis.AIReportVersion + 1
 	updates := map[string]interface{}{
 		"ai_report":         req.Report,
@@ -2649,9 +2711,45 @@ func (ctrl *VideoAnalysisController) UpdateAIReport(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "更新报告失败")
 		return
 	}
+	analysis.AIReport = req.Report
+	analysis.AIReportStatus = "draft"
+	analysis.AIReportVersion = nextVersion
 
 	reportRepo := models.NewReportRepository(ctrl.db)
 	if report, _ := reportRepo.FindByOrderID(analysis.OrderID); report != nil {
+		reportUpdates := map[string]interface{}{
+			"content": req.Report,
+		}
+		if ctrl.reportGen != nil {
+			var userForDoc models.User
+			_ = ctrl.db.First(&userForDoc, analysis.UserID).Error
+			var analystForDoc models.Analyst
+			_ = ctrl.db.First(&analystForDoc, analysis.AnalystID).Error
+			docHighlights, _ := ctrl.highlightRepo.FindIncludedInReport(analysis.ID)
+
+			wordPath, wordErr := ctrl.reportGen.GenerateVideoAnalysisWordReport(analysis, analystForDoc.Name, &userForDoc, docHighlights...)
+			if wordErr != nil {
+				utils.Error(c, http.StatusInternalServerError, "生成正式Word报告失败: "+wordErr.Error())
+				return
+			}
+			if wordPath != "" {
+				reportUpdates["ai_report_url"] = wordPath
+			}
+
+			pdfPath, pdfErr := ctrl.reportGen.GenerateVideoAnalysisPDFReport(analysis, analystForDoc.Name, &userForDoc, docHighlights...)
+			if pdfErr != nil {
+				utils.Error(c, http.StatusInternalServerError, "生成正式PDF报告失败: "+pdfErr.Error())
+				return
+			}
+			if pdfPath != "" {
+				reportUpdates["pdf_url"] = pdfPath
+			}
+		}
+		if err := reportRepo.Update(report.ID, reportUpdates); err != nil {
+			utils.Error(c, http.StatusInternalServerError, "更新报告文件失败")
+			return
+		}
+
 		ctrl.appendReportVersion(&models.ReportVersion{
 			ReportID:                report.ID,
 			OrderID:                 analysis.OrderID,
@@ -2660,18 +2758,16 @@ func (ctrl *VideoAnalysisController) UpdateAIReport(c *gin.Context) {
 			SourceType:              models.ReportVersionSourceOnlineEdit,
 			Status:                  models.ReportVersionStatusAnalystEditing,
 			Content:                 req.Report,
-			WordURL:                 report.AIReportURL,
-			PDFURL:                  report.PdfURL,
+			WordURL:                 firstNonEmptyString(stringValue(reportUpdates["ai_report_url"]), report.AIReportURL),
+			PDFURL:                  firstNonEmptyString(stringValue(reportUpdates["pdf_url"]), report.PdfURL),
 			InputSnapshot:           analysis.AIReportInputSnapshot,
 			TemplateVersion:         analysis.AIReportTemplateVersion,
 			DocumentTemplateVersion: services.VideoAnalysisDocumentTemplateVersion,
 			CreatedByRole:           "analyst",
 		})
 	}
-	analysis.AIReportStatus = "draft"
-	analysis.AIReportVersion = nextVersion
 	ctrl.recordAIReportOperationEvent(analysis, "ai_report_updated", "AI报告人工编辑", fmt.Sprintf("人工编辑AI报告，版本 v%d，正文 %d 字", nextVersion, controllerRuneCount(req.Report)), nextVersion, map[string]interface{}{
-		"before_chars": controllerRuneCount(analysis.AIReport),
+		"before_chars": controllerRuneCount(previousReport),
 		"after_chars":  controllerRuneCount(req.Report),
 	})
 
@@ -2762,7 +2858,7 @@ func (ctrl *VideoAnalysisController) ConfirmReport(c *gin.Context) {
 		utils.Error(c, http.StatusInternalServerError, "AI服务未配置，请检查 AI_API_KEY / AI_BASE_URL / AI_MODEL 后重试")
 		return
 	}
-	generateAIReport := ctrl.aiService != nil
+	autoStartAIReport := ctrl.aiService != nil && ctrl.aiService.IsConfigured() && shouldAutoStartAIReportGeneration(analysis)
 	var ratingMD, playerMD, wordReportURL string
 	var pdfReportURL string
 	if ctrl.reportGen != nil {
@@ -2774,7 +2870,7 @@ func (ctrl *VideoAnalysisController) ConfirmReport(c *gin.Context) {
 		ratingMD = ratingPath
 		playerMD = playerPath
 
-		if !generateAIReport {
+		if !autoStartAIReport {
 			docHighlights, _ := ctrl.highlightRepo.FindIncludedInReport(analysis.ID)
 			wordPath, wordErr := ctrl.reportGen.GenerateVideoAnalysisWordReport(analysis, analystForDoc.Name, &userForDoc, docHighlights...)
 			if wordErr != nil {
@@ -2794,7 +2890,9 @@ func (ctrl *VideoAnalysisController) ConfirmReport(c *gin.Context) {
 
 	// 2. 更新 video_analyses 状态
 	aiReportStatus := "confirmed"
-	if generateAIReport {
+	if isAIReportGenerationRunning(analysis.AIReportStatus) {
+		aiReportStatus = analysis.AIReportStatus
+	} else if autoStartAIReport {
 		aiReportStatus = "generating"
 	}
 	updates := map[string]interface{}{
@@ -2899,7 +2997,7 @@ func (ctrl *VideoAnalysisController) ConfirmReport(c *gin.Context) {
 		}
 	}
 
-	if !generateAIReport {
+	if !autoStartAIReport {
 		ctrl.appendReportVersion(&models.ReportVersion{
 			ReportID:                reportID,
 			OrderID:                 analysis.OrderID,
@@ -2933,12 +3031,12 @@ func (ctrl *VideoAnalysisController) ConfirmReport(c *gin.Context) {
 		CreatedAt: time.Now(),
 	})
 
-	if generateAIReport {
+	if autoStartAIReport {
 		ctrl.startAIReportGeneration(analysis.ID, reportID, nextReportVersion, "generating")
 	}
 
 	responseMessage := "报告已提交审核，文档已生成"
-	if generateAIReport {
+	if isAIReportGenerationRunning(aiReportStatus) {
 		responseMessage = "评分已提交，视频分析报告正在生成，预计5-10分钟后可在订单详情查看"
 	}
 	utils.Success(c, responseMessage, gin.H{
@@ -3004,18 +3102,19 @@ func (ctrl *VideoAnalysisController) CreateFromOrder(c *gin.Context) {
 	}
 
 	analysis := &models.VideoAnalysis{
-		OrderID:        req.OrderID,
-		AnalystID:      *order.AnalystID,
-		UserID:         order.UserID,
-		PlayerName:     order.PlayerName,
-		PlayerAge:      order.PlayerAge,
-		PlayerPosition: order.PlayerPosition,
-		MatchName:      order.MatchName,
-		MatchDate:      order.MatchDate,
-		Opponent:       order.Opponent,
-		PlayTime:       order.VideoDuration / 60,
-		VideoURL:       order.VideoURL,
-		Status:         models.AnalysisStatusScoring,
+		OrderID:            req.OrderID,
+		AnalystID:          *order.AnalystID,
+		UserID:             order.UserID,
+		PlayerName:         order.PlayerName,
+		PlayerAge:          order.PlayerAge,
+		PlayerPosition:     order.PlayerPosition,
+		MatchName:          order.MatchName,
+		MatchDate:          order.MatchDate,
+		Opponent:           order.Opponent,
+		PlayTime:           order.VideoDuration / 60,
+		VideoURL:           order.VideoURL,
+		VideoSecondHalfURL: order.VideoSecondHalfURL,
+		Status:             models.AnalysisStatusScoring,
 	}
 	ctrl.applyVideoAnalysisPlayerProfileFallback(analysis)
 

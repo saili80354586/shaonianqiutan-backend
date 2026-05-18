@@ -10,6 +10,10 @@ import (
 func SetupScoutMapRoutes(r *gin.RouterGroup, mapController *controllers.MapController) {
 	scout := r.Group("/scout")
 	{
+		// 地图底图代理，避免浏览器直连第三方 GeoJSON 被 403 拦截
+		scout.GET("/map/geo/china", mapController.ProxyChinaGeoJSON)
+		scout.GET("/map/geo/province/:code", mapController.ProxyProvinceGeoJSON)
+
 		// 新版分层地图接口
 		scout.GET("/map/national", mapController.GetNationalMapData)
 		scout.GET("/map/provincial", mapController.GetProvincialMapData)
@@ -17,6 +21,7 @@ func SetupScoutMapRoutes(r *gin.RouterGroup, mapController *controllers.MapContr
 
 		// Stage 4 新增接口
 		scout.GET("/map/dashboard", mapController.GetDashboardStats)
+		scout.GET("/map/city-hotlist", mapController.GetCityHotlist)
 		scout.GET("/map/overseas", mapController.GetOverseasPlayers)
 		scout.GET("/map/recommendations", mapController.GetRecommendations)
 		scout.GET("/map/rising-stars", mapController.GetRisingStars)

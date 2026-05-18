@@ -3,6 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"strconv"
 	"time"
 
@@ -15,13 +16,18 @@ import (
 
 // MatchScheduleController 赛程日历控制器
 type MatchScheduleController struct {
-	clubService *services.ClubService
-	db          *gorm.DB
+	clubService         *services.ClubService
+	db                  *gorm.DB
+	notificationService *services.NotificationService
 }
 
 // NewMatchScheduleController 创建赛程日历控制器
 func NewMatchScheduleController(clubService *services.ClubService, db *gorm.DB) *MatchScheduleController {
 	return &MatchScheduleController{clubService: clubService, db: db}
+}
+
+func (c *MatchScheduleController) SetNotificationService(notificationService *services.NotificationService) {
+	c.notificationService = notificationService
 }
 
 // ListMatchSchedules 获取赛程列表
@@ -98,7 +104,54 @@ func (c *MatchScheduleController) CreateMatchSchedule(ctx *gin.Context) {
 		utils.ServerError(ctx, "创建失败")
 		return
 	}
+	c.notifyMatchScheduleCreated(&schedule)
 	utils.SuccessResponse(ctx, formatMatchSchedule(&schedule))
+}
+
+func (c *MatchScheduleController) notifyMatchScheduleCreated(schedule *models.MatchSchedule) {
+	if c.notificationService == nil || schedule == nil {
+		return
+	}
+
+	playerIDs := c.getActiveTeamPlayerIDs(schedule.TeamID)
+	if len(playerIDs) == 0 {
+		return
+	}
+
+	extra := map[string]interface{}{
+		"team_id":    schedule.TeamID,
+		"match_time": schedule.MatchTime.Format(time.RFC3339),
+		"opponent":   schedule.Opponent,
+		"location":   schedule.Location,
+	}
+	err := c.notificationService.NotifyTeamCalendarEvent(
+		playerIDs,
+		models.NotificationTypeMatchScheduleCreated,
+		"新的比赛计划",
+		schedule.Name+" 已加入球队日历，请做好赛前准备",
+		"match_schedule",
+		schedule.ID,
+		"/user-dashboard?tab=team_calendar",
+		extra,
+	)
+	if err != nil {
+		log.Printf("发送比赛计划通知失败 (scheduleID=%d): %v", schedule.ID, err)
+		return
+	}
+	_ = c.db.Model(schedule).Update("pre_remind_sent", true).Error
+}
+
+func (c *MatchScheduleController) getActiveTeamPlayerIDs(teamID uint) []uint {
+	var players []models.TeamPlayer
+	if err := c.db.Where("team_id = ? AND status = ?", teamID, "active").Find(&players).Error; err != nil {
+		return []uint{}
+	}
+
+	playerIDs := make([]uint, 0, len(players))
+	for _, player := range players {
+		playerIDs = append(playerIDs, player.UserID)
+	}
+	return playerIDs
 }
 
 // GetMatchSchedule 获取赛程详情

@@ -15,6 +15,7 @@ func SetupPhysicalTestRoutes(r *gin.RouterGroup, ptController *controllers.Physi
 		physicalTests.GET("", ptController.GetPhysicalTests)
 		physicalTests.POST("", ptController.CreatePhysicalTest)
 		physicalTests.GET("/:id", ptController.GetPhysicalTest)
+		physicalTests.GET("/:id/training-suggestions", ptController.GetTrainingSuggestions)
 		physicalTests.PUT("/:id", ptController.UpdatePhysicalTest)
 		physicalTests.DELETE("/:id", ptController.DeletePhysicalTest)
 

@@ -84,6 +84,29 @@ func (ctrl *AnalystController) GetAnalystPublicProfile(c *gin.Context) {
 	utils.Success(c, "", profile)
 }
 
+// GetAnalystOfficialWorks 获取分析师公开主页官方采用作品
+func (ctrl *AnalystController) GetAnalystOfficialWorks(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的分析师ID")
+		return
+	}
+
+	pagination := utils.ParsePaginationWithSize(c, 6)
+	works, err := ctrl.analystService.GetAnalystOfficialWorks(uint(id), pagination.Page, pagination.PageSize)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取官方采用作品失败")
+		return
+	}
+
+	utils.Success(c, "", gin.H{
+		"list":     works,
+		"page":     pagination.Page,
+		"pageSize": pagination.PageSize,
+	})
+}
+
 // GetAnalystPublicProfileByUser 通过 user_id 获取分析师公开主页数据
 func (ctrl *AnalystController) GetAnalystPublicProfileByUser(c *gin.Context) {
 	userIDStr := c.Query("user_id")
@@ -243,13 +266,19 @@ func (ctrl *AnalystController) GetPendingOrders(c *gin.Context) {
 		return
 	}
 
-	orders, err := ctrl.analystService.GetPendingOrders(analystID.(uint))
+	pagination := utils.ParsePaginationWithSize(c, 10)
+	orders, total, err := ctrl.analystService.GetPendingOrders(analystID.(uint), pagination.Page, pagination.PageSize)
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	utils.Success(c, "", gin.H{"list": orders})
+	utils.Success(c, "", gin.H{
+		"list":     orders,
+		"total":    total,
+		"page":     pagination.Page,
+		"pageSize": pagination.PageSize,
+	})
 }
 
 // GetActiveOrders 获取进行中订单
@@ -260,13 +289,19 @@ func (ctrl *AnalystController) GetActiveOrders(c *gin.Context) {
 		return
 	}
 
-	orders, err := ctrl.analystService.GetActiveOrders(analystID.(uint))
+	pagination := utils.ParsePaginationWithSize(c, 10)
+	orders, total, err := ctrl.analystService.GetActiveOrders(analystID.(uint), pagination.Page, pagination.PageSize)
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	utils.Success(c, "", gin.H{"list": orders})
+	utils.Success(c, "", gin.H{
+		"list":     orders,
+		"total":    total,
+		"page":     pagination.Page,
+		"pageSize": pagination.PageSize,
+	})
 }
 
 // GetHistoryOrders 获取历史订单

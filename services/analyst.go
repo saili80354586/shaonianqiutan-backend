@@ -217,22 +217,28 @@ type AnalystPublicProfile struct {
 	User          *models.User       `json:"user,omitempty"`
 	Stats         PublicStats        `json:"stats"`
 	SampleReports []PublicReport     `json:"sample_reports"`
+	OfficialWorks []OfficialWork     `json:"official_works"`
 	// Reviews     []Review     `json:"reviews"`  // 后续扩展
 }
 
 // AnalystPublicInfo API响应专用的分析师信息结构
 type AnalystPublicInfo struct {
-	ID          uint     `json:"id"`
-	UserID      uint     `json:"user_id"`
-	Name        string   `json:"name"`
-	Bio         string   `json:"bio"`
-	Specialty   []string `json:"specialty"`
-	Experience  int      `json:"experience"`
-	Profession  string   `json:"profession"`
-	IsProPlayer bool     `json:"is_pro_player"`
-	HasCase     bool     `json:"has_case"`
-	CreatedAt   string   `json:"created_at"`
-	UpdatedAt   string   `json:"updated_at"`
+	ID                   uint     `json:"id"`
+	UserID               uint     `json:"user_id"`
+	Name                 string   `json:"name"`
+	Bio                  string   `json:"bio"`
+	Specialty            []string `json:"specialty"`
+	Experience           int      `json:"experience"`
+	Profession           string   `json:"profession"`
+	IsProPlayer          bool     `json:"is_pro_player"`
+	HasCase              bool     `json:"has_case"`
+	LevelCode            string   `json:"level_code"`
+	IsOfficialPartner    bool     `json:"is_official_partner"`
+	PartnershipStartedAt string   `json:"partnership_started_at"`
+	PartnershipNote      string   `json:"partnership_note"`
+	PartnershipBenefits  string   `json:"partnership_benefits"`
+	CreatedAt            string   `json:"created_at"`
+	UpdatedAt            string   `json:"updated_at"`
 }
 
 type PublicStats struct {
@@ -251,6 +257,22 @@ type PublicReport struct {
 	OverallRating   int    `json:"overall_rating"`
 	PotentialRating string `json:"potential_rating"`
 	CreatedAt       string `json:"created_at"`
+}
+
+type OfficialWork struct {
+	ID             uint   `json:"id"`
+	TaskID         uint   `json:"task_id"`
+	SubmissionID   uint   `json:"submission_id"`
+	WorkTitle      string `json:"work_title"`
+	WorkSummary    string `json:"work_summary"`
+	CoverURL       string `json:"cover_url"`
+	MatchName      string `json:"match_name"`
+	AgeGroup       string `json:"age_group"`
+	Channel        string `json:"channel"`
+	AdoptionStatus string `json:"adoption_status"`
+	AdoptionNote   string `json:"adoption_note"`
+	IsCooperation  bool   `json:"is_cooperation"`
+	CreatedAt      string `json:"created_at"`
 }
 
 func (s *AnalystService) GetAnalystPublicProfile(analystID uint) (*AnalystPublicProfile, error) {
@@ -312,20 +334,34 @@ func (s *AnalystService) GetAnalystPublicProfile(analystID uint) (*AnalystPublic
 
 	// 解析专长数组
 	specialty := parseJSONArray(analyst.Specialty)
+	officialWorks, err := s.GetAnalystOfficialWorks(analystID, 1, 6)
+	if err != nil {
+		return nil, fmt.Errorf("获取官方采用作品失败: %w", err)
+	}
+
+	partnershipStartedAt := ""
+	if analyst.PartnershipStartedAt != nil {
+		partnershipStartedAt = analyst.PartnershipStartedAt.Format("2006-01-02")
+	}
 
 	return &AnalystPublicProfile{
 		Analyst: &AnalystPublicInfo{
-			ID:          analyst.ID,
-			UserID:      analyst.UserID,
-			Name:        analyst.Name,
-			Bio:         analyst.Bio,
-			Specialty:   specialty,
-			Experience:  analyst.Experience,
-			Profession:  analyst.Profession,
-			IsProPlayer: analyst.IsProPlayer,
-			HasCase:     analyst.HasCase,
-			CreatedAt:   analyst.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			UpdatedAt:   analyst.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			ID:                   analyst.ID,
+			UserID:               analyst.UserID,
+			Name:                 analyst.Name,
+			Bio:                  analyst.Bio,
+			Specialty:            specialty,
+			Experience:           analyst.Experience,
+			Profession:           analyst.Profession,
+			IsProPlayer:          analyst.IsProPlayer,
+			HasCase:              analyst.HasCase,
+			LevelCode:            analyst.LevelCode,
+			IsOfficialPartner:    analyst.IsOfficialPartner,
+			PartnershipStartedAt: partnershipStartedAt,
+			PartnershipNote:      analyst.PartnershipNote,
+			PartnershipBenefits:  analyst.PartnershipBenefits,
+			CreatedAt:            analyst.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			UpdatedAt:            analyst.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 		},
 		User: &analyst.User,
 		Stats: PublicStats{
@@ -335,7 +371,57 @@ func (s *AnalystService) GetAnalystPublicProfile(analystID uint) (*AnalystPublic
 			ReviewCount:      int64(analyst.ReviewCount),
 		},
 		SampleReports: sampleReports,
+		OfficialWorks: officialWorks,
 	}, nil
+}
+
+func (s *AnalystService) GetAnalystOfficialWorks(analystID uint, page, pageSize int) ([]OfficialWork, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 6
+	}
+	if pageSize > 20 {
+		pageSize = 20
+	}
+
+	var adoptions []models.OfficialContentAdoption
+	if err := s.orderRepo.GetDB().
+		Preload("Task").
+		Where("analyst_id = ? AND is_public = ?", analystID, true).
+		Order("created_at DESC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&adoptions).Error; err != nil {
+		return nil, err
+	}
+
+	works := make([]OfficialWork, 0, len(adoptions))
+	for _, adoption := range adoptions {
+		matchName := ""
+		ageGroup := ""
+		if adoption.Task != nil {
+			matchName = adoption.Task.MatchName
+			ageGroup = adoption.Task.AgeGroup
+		}
+		works = append(works, OfficialWork{
+			ID:             adoption.ID,
+			TaskID:         adoption.TaskID,
+			SubmissionID:   adoption.SubmissionID,
+			WorkTitle:      adoption.WorkTitle,
+			WorkSummary:    adoption.WorkSummary,
+			CoverURL:       adoption.CoverURL,
+			MatchName:      matchName,
+			AgeGroup:       ageGroup,
+			Channel:        adoption.Channel,
+			AdoptionStatus: string(adoption.AdoptionStatus),
+			AdoptionNote:   adoption.AdoptionNote,
+			IsCooperation:  adoption.AdoptionStatus == models.OfficialContentAdoptionLongTerm,
+			CreatedAt:      adoption.CreatedAt.Format("2006-01-02"),
+		})
+	}
+	return works, nil
 }
 
 // CreateAnalystFromApplication 从申请创建分析师(管理员用)
@@ -422,21 +508,21 @@ func (s *AnalystService) GetDashboardStats(analystID uint) (*AnalystDashboardSta
 }
 
 // GetPendingOrders 获取待处理订单
-func (s *AnalystService) GetPendingOrders(analystID uint) ([]models.Order, error) {
-	orders, err := s.orderRepo.FindPendingByAnalystID(analystID)
+func (s *AnalystService) GetPendingOrders(analystID uint, page, pageSize int) ([]models.Order, int64, error) {
+	orders, total, err := s.orderRepo.FindPendingByAnalystID(analystID, page, pageSize)
 	if err != nil {
-		return nil, fmt.Errorf("获取待处理订单失败: %w", err)
+		return nil, 0, fmt.Errorf("获取待处理订单失败: %w", err)
 	}
-	return orders, nil
+	return orders, total, nil
 }
 
 // GetActiveOrders 获取进行中订单
-func (s *AnalystService) GetActiveOrders(analystID uint) ([]models.Order, error) {
-	orders, err := s.orderRepo.FindActiveByAnalystID(analystID)
+func (s *AnalystService) GetActiveOrders(analystID uint, page, pageSize int) ([]models.Order, int64, error) {
+	orders, total, err := s.orderRepo.FindActiveByAnalystID(analystID, page, pageSize)
 	if err != nil {
-		return nil, fmt.Errorf("获取进行中订单失败: %w", err)
+		return nil, 0, fmt.Errorf("获取进行中订单失败: %w", err)
 	}
-	return orders, nil
+	return orders, total, nil
 }
 
 // GetHistoryOrders 获取历史订单

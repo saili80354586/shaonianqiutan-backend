@@ -15,6 +15,7 @@ func SetupPlayerRoutes(r *gin.RouterGroup, playerController *controllers.PlayerC
 		player.GET("/profile", playerController.GetProfile)
 		player.PUT("/profile", playerController.UpdateProfile)
 		player.PATCH("/profile/partial", playerController.PatchProfile)
+		player.GET("/team-calendar", playerController.GetTeamCalendar)
 		// 体测记录 CRUD
 		player.GET("/physical-tests", playerController.GetPhysicalTests)
 		player.POST("/physical-tests", playerController.CreatePhysicalTest)

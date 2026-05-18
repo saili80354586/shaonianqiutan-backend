@@ -52,6 +52,7 @@ type Order struct {
 
 	// 视频相关字段
 	VideoURL             string `json:"video_url" gorm:"size:500"`
+	VideoSecondHalfURL   string `json:"video_second_half_url" gorm:"size:500"`
 	VideoFilename        string `json:"video_filename" gorm:"size:255"`
 	VideoStorageObjectID *uint  `json:"video_storage_object_id" gorm:"index"`
 
@@ -314,24 +315,40 @@ func CanTransition(currentStatus, newStatus OrderStatus) bool {
 }
 
 // FindPendingByAnalystID 获取分析师待处理订单（status = assigned）
-func (r *OrderRepository) FindPendingByAnalystID(analystID uint) ([]Order, error) {
+func (r *OrderRepository) FindPendingByAnalystID(analystID uint, page, pageSize int) ([]Order, int64, error) {
 	var orders []Order
-	err := r.db.Where("analyst_id = ? AND status = ?", analystID, OrderStatusAssigned).
-		Order("assigned_at ASC").
+	var total int64
+
+	query := r.db.Model(&Order{}).Where("analyst_id = ? AND status = ?", analystID, OrderStatusAssigned)
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := query.Order("assigned_at ASC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
 		Preload("User").
 		Find(&orders).Error
-	return orders, err
+	return orders, total, err
 }
 
 // FindActiveByAnalystID 获取分析师进行中订单（status = processing）
-func (r *OrderRepository) FindActiveByAnalystID(analystID uint) ([]Order, error) {
+func (r *OrderRepository) FindActiveByAnalystID(analystID uint, page, pageSize int) ([]Order, int64, error) {
 	var orders []Order
-	err := r.db.Where("analyst_id = ? AND status = ?", analystID, OrderStatusProcessing).
-		Order("deadline ASC").
+	var total int64
+
+	query := r.db.Model(&Order{}).Where("analyst_id = ? AND status = ?", analystID, OrderStatusProcessing)
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := query.Order("deadline ASC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
 		Preload("User").
 		Preload("Report").
 		Find(&orders).Error
-	return orders, err
+	return orders, total, err
 }
 
 // FindHistoryByAnalystID 获取分析师历史订单（completed/cancelled）支持筛选和分页

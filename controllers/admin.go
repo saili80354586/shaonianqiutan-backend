@@ -3,7 +3,9 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -153,7 +155,7 @@ func (ctrl *AdminController) DownloadVideoAnalysisDoc(c *gin.Context) {
 		return
 	}
 
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", fileName))
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(fileName)))
 	c.Header("Content-Type", "text/markdown; charset=utf-8")
 	c.File(filePath)
 }
@@ -187,7 +189,34 @@ func (ctrl *AdminController) GetUserList(c *gin.Context) {
 	page := pagination.Page
 	pageSize := pagination.PageSize
 
-	users, total, err := ctrl.adminService.GetUserList(page, pageSize)
+	filters := models.AdminUserListFilters{
+		Keyword: strings.TrimSpace(c.Query("keyword")),
+		Role:    strings.TrimSpace(c.Query("role")),
+		Status:  strings.TrimSpace(c.Query("status")),
+		City:    strings.TrimSpace(c.Query("city")),
+	}
+	if ageMinStr := strings.TrimSpace(c.Query("ageMin")); ageMinStr != "" {
+		ageMin, err := strconv.Atoi(ageMinStr)
+		if err != nil || ageMin < 0 {
+			utils.Error(c, http.StatusBadRequest, "无效的最小年龄")
+			return
+		}
+		filters.AgeMin = &ageMin
+	}
+	if ageMaxStr := strings.TrimSpace(c.Query("ageMax")); ageMaxStr != "" {
+		ageMax, err := strconv.Atoi(ageMaxStr)
+		if err != nil || ageMax < 0 {
+			utils.Error(c, http.StatusBadRequest, "无效的最大年龄")
+			return
+		}
+		filters.AgeMax = &ageMax
+	}
+	if filters.AgeMin != nil && filters.AgeMax != nil && *filters.AgeMin > *filters.AgeMax {
+		utils.Error(c, http.StatusBadRequest, "最小年龄不能大于最大年龄")
+		return
+	}
+
+	users, total, err := ctrl.adminService.GetUserList(page, pageSize, filters)
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "获取用户列表失败")
 		return
@@ -514,7 +543,7 @@ func (ctrl *AdminController) ReviewReport(c *gin.Context) {
 	utils.Success(c, "审核完成", nil)
 }
 
-// DownloadReportDoc 管理员下载报告 MD 文档或 AI Word 报告
+// DownloadReportDoc 管理员下载报告 MD 文档、正式 Word 或 PDF 报告
 func (ctrl *AdminController) DownloadReportDoc(c *gin.Context) {
 	reportIDStr := c.Param("id")
 	reportID, err := strconv.ParseUint(reportIDStr, 10, 32)
@@ -523,38 +552,54 @@ func (ctrl *AdminController) DownloadReportDoc(c *gin.Context) {
 		return
 	}
 
-	docType := c.DefaultQuery("type", "rating") // rating | player-info | report
-	if docType != "rating" && docType != "player-info" && docType != "report" {
+	docType := c.DefaultQuery("type", "rating") // rating | player-info | report | pdf
+	if docType != "rating" && docType != "player-info" && docType != "report" && docType != "pdf" {
 		utils.Error(c, http.StatusBadRequest, "无效的文档类型")
 		return
 	}
 
 	report, err := ctrl.adminService.GetReportByID(uint(reportID))
-	if err != nil {
+	if err != nil || report == nil {
 		utils.Error(c, http.StatusNotFound, "报告不存在")
 		return
 	}
 
 	var filePath string
 	var fileName string
+	var contentType string
 	if docType == "rating" {
 		filePath = report.RatingReportMD
 		fileName = fmt.Sprintf("评分报告_%d.md", report.OrderID)
+		contentType = "text/markdown; charset=utf-8"
 	} else if docType == "player-info" {
 		filePath = report.PlayerInfoMD
 		fileName = fmt.Sprintf("球员基础信息_%s.md", report.PlayerName)
-	} else {
-		// AI Word 报告
-		filePath = "./uploads/reports/" + strings.TrimPrefix(report.AIReportURL, "/uploads/reports/")
-		fileName = filepath.Base(filePath)
-		if report.AIReportURL == "" {
-			utils.Error(c, http.StatusNotFound, "AI 报告尚未生成")
+		contentType = "text/markdown; charset=utf-8"
+	} else if docType == "pdf" {
+		if strings.TrimSpace(report.PdfURL) == "" {
+			utils.Error(c, http.StatusNotFound, "PDF 报告尚未生成")
 			return
 		}
+		filePath = adminReportFileRef(report.PdfURL)
+		fileName = adminReportFileName(report.PdfURL, fmt.Sprintf("正式报告_%s.pdf", report.PlayerName))
+		contentType = "application/pdf"
+	} else {
+		if strings.TrimSpace(report.AIReportURL) == "" {
+			utils.Error(c, http.StatusNotFound, "Word 报告尚未生成")
+			return
+		}
+		filePath = adminReportFileRef(report.AIReportURL)
+		fileName = adminReportFileName(report.AIReportURL, fmt.Sprintf("正式报告_%s.docx", report.PlayerName))
+		contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 	}
 
 	if filePath == "" {
 		utils.Error(c, http.StatusNotFound, "文档不存在")
+		return
+	}
+
+	if isRemoteReportFile(filePath) {
+		streamRemoteReportFile(c, filePath, fileName, contentType)
 		return
 	}
 
@@ -563,16 +608,84 @@ func (ctrl *AdminController) DownloadReportDoc(c *gin.Context) {
 		return
 	}
 
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", fileName))
-	// 根据文件类型设置 Content-Type
-	if strings.HasSuffix(filePath, ".docx") {
-		c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-	} else if strings.HasSuffix(filePath, ".md") {
-		c.Header("Content-Type", "text/markdown; charset=utf-8")
-	} else {
-		c.Header("Content-Type", "application/octet-stream")
-	}
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(fileName)))
+	c.Header("Content-Type", firstNonEmptyContentType(contentType, adminReportAttachmentContentType(filePath)))
 	c.File(filePath)
+}
+
+func adminReportFileRef(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" || isRemoteReportFile(value) {
+		return value
+	}
+	if strings.HasPrefix(value, "/uploads/") {
+		return filepath.Join(".", strings.TrimPrefix(value, "/"))
+	}
+	if filepath.IsAbs(value) {
+		return value
+	}
+	return filepath.Join(".", strings.TrimPrefix(value, "/"))
+}
+
+func adminReportFileName(raw string, fallback string) string {
+	value := strings.TrimSpace(raw)
+	if parsedURL, err := url.Parse(value); err == nil && parsedURL.Path != "" {
+		value = parsedURL.Path
+	}
+	if base := filepath.Base(strings.TrimPrefix(value, "/")); base != "" && base != "." && base != "/" {
+		return base
+	}
+	return fallback
+}
+
+func isRemoteReportFile(value string) bool {
+	return strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://")
+}
+
+func streamRemoteReportFile(c *gin.Context, fileURL string, fileName string, contentType string) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(fileURL)
+	if err != nil {
+		utils.Error(c, http.StatusBadGateway, "远程报告文件下载失败")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		utils.Error(c, http.StatusNotFound, "远程报告文件不存在")
+		return
+	}
+	if contentType == "" {
+		contentType = resp.Header.Get("Content-Type")
+	}
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(fileName)))
+	c.Header("Content-Type", firstNonEmptyContentType(contentType, "application/octet-stream"))
+	if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
+		c.Header("Content-Length", contentLength)
+	}
+	c.Status(http.StatusOK)
+	_, _ = io.Copy(c.Writer, resp.Body)
+}
+
+func firstNonEmptyContentType(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return "application/octet-stream"
+}
+
+func adminReportAttachmentContentType(filePath string) string {
+	switch strings.ToLower(filepath.Ext(filePath)) {
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".pdf":
+		return "application/pdf"
+	case ".md":
+		return "text/markdown; charset=utf-8"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 // UploadAIReport 上传 AI Word 报告
@@ -1443,6 +1556,19 @@ func (ctrl *AdminController) GetFAQs(c *gin.Context) {
 	utils.Success(c, "", gin.H{"list": faqs, "total": total, "page": pagination.Page, "pageSize": pagination.PageSize})
 }
 
+// GetPublicFAQs 获取前台帮助中心 FAQ 列表
+func (ctrl *AdminController) GetPublicFAQs(c *gin.Context) {
+	pagination := utils.ParsePaginationWithSize(c, 50)
+	category := c.DefaultQuery("category", "")
+	enabled := true
+	faqs, total, err := ctrl.adminService.GetFAQs(pagination.Page, pagination.PageSize, category, &enabled)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取FAQ列表失败")
+		return
+	}
+	utils.Success(c, "", gin.H{"list": faqs, "total": total, "page": pagination.Page, "pageSize": pagination.PageSize})
+}
+
 // CreateFAQRequest 创建FAQ请求
 type CreateFAQRequest struct {
 	Question  string `json:"question" binding:"required"`
@@ -1530,6 +1656,131 @@ func (ctrl *AdminController) DeleteFAQ(c *gin.Context) {
 		return
 	}
 	ctrl.writeAuditLog(c, "delete_faq", "faq", uint(id), "删除FAQ")
+	utils.Success(c, "删除成功", nil)
+}
+
+// GetHelpGuides 获取使用指南列表
+func (ctrl *AdminController) GetHelpGuides(c *gin.Context) {
+	pagination := utils.ParsePaginationWithSize(c, 10)
+	role := c.DefaultQuery("role", "")
+	enabledStr := c.DefaultQuery("enabled", "")
+	var enabled *bool
+	if enabledStr != "" {
+		e := enabledStr == "true"
+		enabled = &e
+	}
+	guides, total, err := ctrl.adminService.GetHelpGuides(pagination.Page, pagination.PageSize, role, enabled)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取使用指南失败")
+		return
+	}
+	utils.Success(c, "", gin.H{"list": guides, "total": total, "page": pagination.Page, "pageSize": pagination.PageSize})
+}
+
+// GetPublicHelpGuides 获取前台帮助中心使用指南
+func (ctrl *AdminController) GetPublicHelpGuides(c *gin.Context) {
+	pagination := utils.ParsePaginationWithSize(c, 50)
+	role := c.DefaultQuery("role", "")
+	enabled := true
+	guides, total, err := ctrl.adminService.GetHelpGuides(pagination.Page, pagination.PageSize, role, &enabled)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "获取使用指南失败")
+		return
+	}
+	utils.Success(c, "", gin.H{"list": guides, "total": total, "page": pagination.Page, "pageSize": pagination.PageSize})
+}
+
+type CreateHelpGuideRequest struct {
+	Role      string `json:"role" binding:"required"`
+	Title     string `json:"title" binding:"required"`
+	Summary   string `json:"summary"`
+	Content   string `json:"content" binding:"required"`
+	SortOrder int    `json:"sort_order"`
+	Enabled   bool   `json:"enabled"`
+}
+
+// CreateHelpGuide 创建使用指南
+func (ctrl *AdminController) CreateHelpGuide(c *gin.Context) {
+	adminID := c.GetUint("userId")
+	var req CreateHelpGuideRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	guide := &models.HelpGuide{
+		Role: req.Role, Title: req.Title, Summary: req.Summary, Content: req.Content,
+		SortOrder: req.SortOrder, Enabled: req.Enabled, CreatedBy: adminID,
+	}
+	if err := ctrl.adminService.CreateHelpGuide(guide); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "创建失败: "+err.Error())
+		return
+	}
+	ctrl.writeAuditLog(c, "create_help_guide", "help_guide", guide.ID, "创建使用指南："+req.Title)
+	utils.Success(c, "创建成功", guide)
+}
+
+type UpdateHelpGuideRequest struct {
+	Role      string `json:"role"`
+	Title     string `json:"title"`
+	Summary   string `json:"summary"`
+	Content   string `json:"content"`
+	SortOrder int    `json:"sort_order"`
+	Enabled   *bool  `json:"enabled"`
+}
+
+// UpdateHelpGuide 更新使用指南
+func (ctrl *AdminController) UpdateHelpGuide(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的使用指南ID")
+		return
+	}
+	var req UpdateHelpGuideRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	updates := make(map[string]interface{})
+	if req.Role != "" {
+		updates["role"] = req.Role
+	}
+	if req.Title != "" {
+		updates["title"] = req.Title
+	}
+	if req.Summary != "" {
+		updates["summary"] = req.Summary
+	}
+	if req.Content != "" {
+		updates["content"] = req.Content
+	}
+	if req.SortOrder != 0 {
+		updates["sort_order"] = req.SortOrder
+	}
+	if req.Enabled != nil {
+		updates["enabled"] = *req.Enabled
+	}
+	if err := ctrl.adminService.UpdateHelpGuide(uint(id), updates); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "更新失败: "+err.Error())
+		return
+	}
+	ctrl.writeAuditLog(c, "update_help_guide", "help_guide", uint(id), "更新使用指南")
+	utils.Success(c, "更新成功", nil)
+}
+
+// DeleteHelpGuide 删除使用指南
+func (ctrl *AdminController) DeleteHelpGuide(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "无效的使用指南ID")
+		return
+	}
+	if err := ctrl.adminService.DeleteHelpGuide(uint(id)); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "删除失败: "+err.Error())
+		return
+	}
+	ctrl.writeAuditLog(c, "delete_help_guide", "help_guide", uint(id), "删除使用指南")
 	utils.Success(c, "删除成功", nil)
 }
 

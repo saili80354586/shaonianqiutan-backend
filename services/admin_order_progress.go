@@ -504,13 +504,16 @@ func buildAdminScoreProgress(analysis *models.VideoAnalysis, eventStats map[stri
 
 	for _, detail := range details {
 		commentWords := runeCount(detail.Comment)
-		scoreChanged := math.Abs(detail.Score-7.0) > 0.001
+		stats := eventStats[detail.FieldKey]
+		displayScore := normalizeAdminProgressScore(detail.Score)
+		scoreChanged := math.Abs(displayScore-7.0) > 0.001
+		scoreTouched := scoreChanged || stats.count > 0
 		status := "not_started"
 		switch {
-		case scoreChanged && commentWords > 0:
+		case scoreTouched && commentWords > 0:
 			status = "completed"
 			overview.CompletedCount++
-		case scoreChanged:
+		case scoreTouched:
 			status = "score_only"
 			overview.ScoreOnlyCount++
 		case commentWords > 0:
@@ -521,7 +524,6 @@ func buildAdminScoreProgress(analysis *models.VideoAnalysis, eventStats map[stri
 		}
 		overview.CommentTotalWords += commentWords
 
-		stats := eventStats[detail.FieldKey]
 		if stats.lastUpdatedAt != nil && (overview.LastSavedAt == nil || stats.lastUpdatedAt.After(*overview.LastSavedAt)) {
 			overview.LastSavedAt = stats.lastUpdatedAt
 		}
@@ -529,7 +531,7 @@ func buildAdminScoreProgress(analysis *models.VideoAnalysis, eventStats map[stri
 		item := AdminScoreDimensionDTO{
 			FieldKey:      detail.FieldKey,
 			FieldLabel:    detail.FieldLabel,
-			Score:         detail.Score,
+			Score:         displayScore,
 			CommentWords:  commentWords,
 			Status:        status,
 			LastUpdatedAt: stats.lastUpdatedAt,
@@ -554,6 +556,13 @@ func buildAdminScoreProgress(analysis *models.VideoAnalysis, eventStats map[stri
 	}
 
 	return overview, groups
+}
+
+func normalizeAdminProgressScore(score float64) float64 {
+	if score > 10 {
+		return score / 10
+	}
+	return score
 }
 
 func buildAdminTextSections(analysis *models.VideoAnalysis, eventStats map[string]operationEventStats) []AdminTextSectionDTO {

@@ -86,6 +86,10 @@ const (
 	NotificationTypeMatchPlayerReminder  NotificationType = "match_player_reminder"  // 待自评提醒
 	NotificationTypeMatchCoachReminder   NotificationType = "match_coach_reminder"   // 待点评提醒
 	NotificationTypeMatchSummaryComplete NotificationType = "match_summary_complete" // 点评完成
+	// 球队日历相关
+	NotificationTypeTrainingPlanCreated  NotificationType = "training_plan_created"  // 新训练计划
+	NotificationTypeMatchScheduleCreated NotificationType = "match_schedule_created" // 新比赛计划
+	NotificationTypePhysicalTestCreated  NotificationType = "physical_test_created"  // 新体测安排
 	// 俱乐部活动相关
 	NotificationTypeActivityRegistration NotificationType = "activity_registration" // 新报名
 	NotificationTypeActivityApproved     NotificationType = "activity_approved"     // 报名通过

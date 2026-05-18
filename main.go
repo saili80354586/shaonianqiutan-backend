@@ -55,9 +55,25 @@ func main() {
 		&models.OrderStatusHistory{},
 		&models.StorageObject{},
 		&models.Analyst{},
+		&models.AnalystLevel{},
+		&models.AnalystLevelApplication{},
+		&models.AnalystGrowthSnapshot{},
+		&models.AnalystLevelHistory{},
+		&models.OfficialAnalysisTask{},
+		&models.OfficialAnalysisTaskAcceptance{},
+		&models.OfficialAnalysisSubmission{},
+		&models.OfficialContentAdoption{},
+		&models.OfficialContentPublishRecord{},
+		&models.OfficialEventTopicConfig{},
+		&models.AnalystRewardSettlementBatch{},
+		&models.AnalystRewardRecord{},
 		&models.AnalystApplication{},
 		&models.UserRoleRecord{},
 		&models.RoleApplication{},
+		&models.Coach{},
+		&models.FootballExperience{},
+		&models.CoachFollowPlayer{},
+		&models.TrainingNote{},
 		&models.Scout{},
 		&models.Club{},
 		&models.ClubPlayer{},
@@ -73,6 +89,7 @@ func main() {
 		&models.PhysicalTestReport{},
 		&models.PhysicalTestTemplateCustom{},
 		&models.ClubHome{},
+		&models.ClubHomeInquiry{},
 		&models.ClubHomeTeam{},
 		&models.ClubHomeCoach{},
 		&models.ClubHomePlayer{},
@@ -92,6 +109,7 @@ func main() {
 		&models.Follow{},
 		&models.GrowthRecord{},
 		&models.TrainingPlan{},
+		&models.TrainingAttendance{},
 		&models.MatchSchedule{},
 		&models.VideoAnalysis{},
 		&models.AnalysisHighlight{},
@@ -101,6 +119,10 @@ func main() {
 		&models.AdminOperationLog{},
 		&models.PlayerShortlist{},
 		&models.TeamSeasonArchive{},
+		&models.TeamMonthlyReportArchive{},
+		&models.TeamMonthlyReportArchiveVersion{},
+		&models.TeamMonthlyReportArchiveReviewEvent{},
+		&models.TeamMonthlyReportArchiveAdjustmentItem{},
 		&models.TrialInvite{},
 		&models.Message{},
 		&models.ContentReport{},
@@ -108,6 +130,7 @@ func main() {
 		&models.PlatformAnnouncement{},
 		&models.Banner{},
 		&models.FAQ{},
+		&models.HelpGuide{},
 		&models.LoginLog{},
 		&models.SystemSetting{},
 		&models.AdminPermission{},
@@ -127,6 +150,9 @@ func main() {
 	}
 	if err := models.SeedDefaultAdminRBAC(db); err != nil {
 		log.Printf("管理员权限默认数据初始化失败: %v", err)
+	}
+	if err := models.SeedDefaultAnalystLevels(db); err != nil {
+		log.Printf("分析师默认等级初始化失败: %v", err)
 	}
 
 	// 初始化 WebSocket Hub
@@ -243,6 +269,7 @@ func main() {
 		platformAnnRepo := models.NewPlatformAnnouncementRepository(db)
 		bannerRepo := models.NewBannerRepository(db)
 		faqRepo := models.NewFAQRepository(db)
+		helpGuideRepo := models.NewHelpGuideRepository(db)
 		loginLogRepo := models.NewLoginLogRepository(db)
 
 		// ========== Service 初始化 ==========
@@ -264,8 +291,11 @@ func main() {
 		clubOrderService := services.NewClubOrderService(db)
 		socialService := services.NewSocialService(socialRepo, notificationService)
 		messageService := services.NewMessageService(messageRepo, userRepo, socialRepo, notificationService)
+		analystApplicationService := services.NewAnalystApplicationService(analystApplicationRepo, userRepo)
+		analystLevelService := services.NewAnalystLevelService(db)
+		officialAnalysisTaskService := services.NewOfficialAnalysisTaskService(db)
 		videoAnalysisRepo := models.NewVideoAnalysisRepository(db)
-		adminService := services.NewAdminService(userRepo, reportRepo, orderRepo, analystRepo, analystApplicationRepo, contentReportRepo, sensitiveWordRepo, platformAnnRepo, bannerRepo, faqRepo, loginLogRepo, videoAnalysisRepo, assignmentRepo, statusHistoryRepo)
+		adminService := services.NewAdminService(userRepo, reportRepo, orderRepo, analystRepo, analystApplicationRepo, contentReportRepo, sensitiveWordRepo, platformAnnRepo, bannerRepo, faqRepo, helpGuideRepo, loginLogRepo, videoAnalysisRepo, assignmentRepo, statusHistoryRepo)
 		adminService.SetNotificationService(notificationService)
 
 		// ========== Controller 初始化 ==========
@@ -283,10 +313,16 @@ func main() {
 		matchVideoController := controllers.NewMatchVideoController(matchSummaryService, db)
 		trainingPlanController := controllers.NewTrainingPlanController(clubService, db)
 		matchScheduleController := controllers.NewMatchScheduleController(clubService, db)
+		physicalTestController.SetNotificationService(notificationService)
+		trainingPlanController.SetNotificationService(notificationService)
+		matchScheduleController.SetNotificationService(notificationService)
 		notificationController := controllers.NewNotificationController(notificationService)
 		socialController := controllers.NewSocialController(socialService)
 		messageController := controllers.NewMessageController(messageService)
 		adminController := controllers.NewAdminController(adminService, videoAnalysisRepo)
+		analystApplicationController := controllers.NewAnalystApplicationController(analystApplicationService)
+		analystLevelController := controllers.NewAnalystLevelController(analystLevelService)
+		officialAnalysisTaskController := controllers.NewOfficialAnalysisTaskController(officialAnalysisTaskService)
 		scoutController := controllers.NewScoutController(scoutService)
 		coachController := controllers.NewCoachController(coachService)
 		coachTeamHomeController := controllers.NewCoachTeamHomeController(teamHomeRepo, teamRepo)
@@ -314,7 +350,7 @@ func main() {
 		routes.SetupReportRoutes(api, reportController)
 		routes.SetupAnalystRoutes(api, analystController)
 		routes.SetupClubRoutes(api, clubController, trainingPlanController, matchScheduleController)
-		routes.SetupTeamRoutes(api, teamRepo, weeklyReportRepo, matchSummaryRepo, coachTeamHomeController, physicalTestController, db)
+		routes.SetupTeamRoutes(api, teamRepo, weeklyReportRepo, matchSummaryRepo, coachTeamHomeController, physicalTestController, notificationService, db)
 		routes.SetupPublicTeamRoutes(api, teamRepo, db)
 		routes.SetupUserSearchRoutes(api, teamRepo)
 		routes.SetupPhysicalTestRoutes(api, physicalTestController)
@@ -333,6 +369,9 @@ func main() {
 		routes.SetupMessageRoutes(api, messageController)
 		routes.SetupAdminRoutes(api, adminController)
 		routes.SetupSystemRoutes(api, adminController)
+		routes.SetupAnalystApplicationRoutes(api, analystApplicationController)
+		routes.SetupAnalystLevelRoutes(api, analystLevelController)
+		routes.SetupOfficialAnalysisTaskRoutes(api, officialAnalysisTaskController)
 		routes.SetupScoutRoutes(api, scoutController)
 		routes.SetupScoutMapRoutes(api, mapController)
 		routes.SetupTrialInviteRoutes(api, trialInviteController)

@@ -189,12 +189,14 @@ func autoMigrate(db *gorm.DB) error {
 		&models.Club{}, &models.ClubPlayer{}, &models.ClubOrder{}, &models.Coach{}, &models.FootballExperience{}, &models.CoachFollowPlayer{}, &models.TrainingNote{},
 		&models.Team{}, &models.TeamPlayer{}, &models.ClubCoach{}, &models.TeamCoach{}, &models.TeamInvitation{}, &models.ClubInvitation{}, &models.TeamApplication{},
 		&models.PhysicalTestTemplateCustom{}, &models.PhysicalTestActivity{}, &models.PhysicalTestRecord{}, &models.PhysicalTestReport{},
-		&models.ClubHome{}, &models.Achievement{}, &models.ClubHomeTeam{}, &models.ClubHomeCoach{}, &models.ClubHomePlayer{}, &models.ClubActivity{}, &models.ClubActivityRegistration{},
+		&models.ClubHome{}, &models.ClubHomeInquiry{}, &models.Achievement{}, &models.ClubHomeTeam{}, &models.ClubHomeCoach{}, &models.ClubHomePlayer{}, &models.ClubActivity{}, &models.ClubActivityRegistration{},
 		&models.WeeklyReport{}, &models.WeeklyReportPeriod{}, &models.MatchSummary{}, &models.PlayerReview{}, &models.MatchVideo{},
 		&models.Order{}, &models.Report{}, &models.VideoAnalysis{}, &models.AnalysisHighlight{},
+		&models.OfficialAnalysisTask{}, &models.OfficialAnalysisTaskAcceptance{}, &models.OfficialAnalysisSubmission{}, &models.OfficialContentAdoption{}, &models.OfficialContentPublishRecord{}, &models.OfficialEventTopicConfig{}, &models.AnalystRewardRecord{},
 		&models.Scout{}, &models.ScoutFollowPlayer{}, &models.ScoutReport{}, &models.ScoutTask{}, &models.PlayerFilterPreset{}, &models.PlayerShortlist{}, &models.TrialInvite{},
 		&models.Notification{}, &models.Comment{}, &models.Like{}, &models.Favorite{}, &models.Post{}, &models.SocialAchievement{}, &models.UserSocialAchievement{}, &models.UserStats{}, &models.Follow{}, &models.GrowthRecord{},
 		&models.TrainingPlan{}, &models.MatchSchedule{}, &models.TeamSeasonArchive{}, &models.AdminOperationLog{}, &models.Message{}, &models.ContentReport{}, &models.SensitiveWord{}, &models.PlatformAnnouncement{}, &models.Banner{}, &models.FAQ{}, &models.LoginLog{}, &models.Announcement{},
+		&models.TeamMonthlyReportArchive{}, &models.TeamMonthlyReportArchiveVersion{}, &models.TeamMonthlyReportArchiveReviewEvent{}, &models.TeamMonthlyReportArchiveAdjustmentItem{},
 	)
 }
 
@@ -216,7 +218,7 @@ func cleanData(tx *gorm.DB) error {
 		"match_videos", "player_reviews", "match_summaries", "weekly_report_periods", "weekly_reports",
 		"physical_test_reports", "physical_test_records", "physical_test_activities", "physical_test_template_customs",
 		"training_notes", "coach_follow_players", "football_experiences", "team_coaches", "club_coaches", "team_players", "team_invitations", "club_invitations", "team_applications", "teams",
-		"club_home_players", "club_home_coaches", "club_home_teams", "club_homes", "achievements", "club_activity_registrations", "club_activities", "announcements",
+		"club_home_inquiries", "club_home_players", "club_home_coaches", "club_home_teams", "club_homes", "achievements", "club_activity_registrations", "club_activities", "announcements",
 		"scout_reports", "scout_follow_players", "scout_tasks", "scouts", "player_filter_presets", "player_shortlists", "trial_invites",
 		"likes", "favorites", "comments", "posts", "follows", "notifications", "user_social_achievements", "social_achievements", "user_social_stats", "growth_records", "messages",
 		"training_plans", "match_schedules", "team_season_archives", "admin_operation_logs", "content_reports", "sensitive_words", "platform_announcements", "banners", "faqs", "login_logs",
@@ -409,6 +411,11 @@ func seedClubSystem(tx *gorm.DB, ctx *seedContext) error {
 	home.Recruitment.Description = "招募 2012-2015 年出生、有稳定训练基础的球员。"
 	home.Recruitment.TrialDate = now.AddDate(0, 0, 14).Format("2006-01-02")
 	home.Recruitment.ContactPhone = ctx.club.ContactPhone
+	home.TemplateType = "professional"
+	home.PublishStatus = "published"
+	home.PublishedAt = &now
+	home.CompletionScore = 92
+	home.ShareSlug = fmt.Sprintf("club-%d", ctx.club.ID)
 	if err := tx.Create(home).Error; err != nil {
 		return err
 	}
